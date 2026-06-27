@@ -1,0 +1,52 @@
+[h1]STS2 Mod Translator[/h1]
+Translate the text of [b]other mods[/b] into [b]any language[/b] — right inside the game, without rebuilding them.
+
+[i]A utility/tool mod. It reads the localized text of your other installed mods and lets you supply your own translations, which are injected back into the game at runtime — cards, relics, powers, characters and more, even for mods that don't ship your language.[/i]
+
+[hr][/hr]
+
+[h2]How to use[/h2]
+[olist]
+[*]Enable this mod and launch the game in the language you want to translate into.
+[*]Open [b]Main Menu ▸ Mod Translator[/b] (it sits next to Settings).
+[*]Drill down: pick a [b]mod[/b] ▸ a [b]language[/b] ▸ a [b]file[/b].
+[*]Translate in the built-in editor, or [b]Upload[/b] a JSON file, or [b]Open Folder[/b] to edit externally.
+[*]Press [b]Save[/b] — it validates and applies instantly. No restart needed.
+[/olist]
+
+[h2]In-game editor[/h2]
+[list]
+[*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right
+[*][b]Reference language toggle[/b] — if a mod already ships other languages, switch the left pane between them (e.g. compare against the existing Chinese/English)
+[*][b]Line numbers[/b] for easy navigation, with JSON validation on save
+[*][b]Upload[/b] a translation file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow
+[/list]
+
+[h2]Features[/h2]
+[list]
+[*]Drill-down panel: Mods ▸ Languages ▸ Files
+[*]Per-mod / per-language progress (coverage %)
+[*]Auto-generated templates — original text for reference + empty fields to fill
+[*]Untranslated entries safely fall back to the original text
+[/list]
+
+[h2]Where the files are[/h2]
+Translations live under the mod's [i]Translations[/i] folder (use [b]Open Folder[/b]). Each mod/language has editable [i]overrides[/i] plus a read-only [i]source[/i] reference of the original text.
+
+[h2]Translation tips[/h2]
+Keep these intact and change only the human-readable text:
+[list]
+[*]Placeholders like [b]!D![/b], [b]!B![/b], [b]!Crit![/b] — numbers are substituted in automatically
+[*]Markup such as [b]*[/b]keyword, leading [b]#[/b], [b]/+[/b], and [b][color][/b] tags
+[/list]
+Leave a value [b]empty[/b] to keep the original (English) text for that entry.
+
+[h2]Scope & compatibility[/h2]
+[list]
+[*]Works with mods that ship a standard localization folder — most well-made content mods (e.g. custom characters).
+[*]Mods that hardcode text outside the localization system are listed as [i]unsupported[/i].
+[*][b]No load-order requirement[/b] — translations are always applied last automatically.
+[/list]
+
+[hr][/hr]
+[i]Author: inggom[/i]

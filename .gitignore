@@ -1,0 +1,28 @@
+# Build outputs (root .godot only — extracted/.godot/ holds beta-pck assets and is tracked)
+/.godot/
+/bin/
+/obj/
+*.dll
+*.pdb
+*.user
+
+# Release packaging temp
+release-tmp/
+*.zip
+
+# Local override (paths, etc.)
+local.props
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.userprefs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime translation data (generated in the game mods install dir)
+Translations/
