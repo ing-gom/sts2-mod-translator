@@ -48,5 +48,8 @@ Leave a value [b]empty[/b] to keep the original (English) text for that entry.
 [*][b]No load-order requirement[/b] — translations are always applied last automatically.
 [/list]
 
+[h2]Source[/h2]
+Open source (MIT) — [url=https://github.com/ing-gom/sts2-mod-translator]github.com/ing-gom/sts2-mod-translator[/url]
+
 [hr][/hr]
 [i]Author: inggom[/i]
