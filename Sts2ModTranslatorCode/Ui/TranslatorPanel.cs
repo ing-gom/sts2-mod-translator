@@ -224,9 +224,21 @@ public static class TranslatorPanel
     private static void BuildLanguages()
     {
         if (_mod == null) { Navigate(View.Mods); return; }
-        var langs = _mod.ShipsLangs
-            .Concat(new[] { TranslationSync.CurrentLanguage() })
-            .Distinct().OrderBy(x => x, StringComparer.Ordinal);
+
+        string cur = TranslationSync.CurrentLanguage();
+        // 게임 전체 지원 언어 ∪ 모드 동봉 언어. eng 는 원문(번역 대상 아님)이라 제외.
+        // 현재 설정 언어를 맨 위(기본 선택)로, 나머지는 게임 선언 순서를 유지(OrderBy 안정 정렬).
+        var langs = TranslationSync.SupportedLanguages()
+            .Concat(_mod.ShipsLangs)
+            .Where(l => !string.Equals(l, "eng", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(l => string.Equals(l, cur, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ToList();
+
+        // 현재 언어만 인게임 즉시 반영, 나머지는 그 언어로 전환 후 적용됨을 안내.
+        _content!.AddChild(Lbl(
+            "Pick any language to translate. The current game language applies instantly; "
+            + "others apply after you switch the game to that language.", GRAY));
 
         var list = ScrollList();
         foreach (var lang in langs)
@@ -234,7 +246,10 @@ public static class TranslatorPanel
             var l = lang;
             var (tot, tr) = TranslationStore.Coverage(_mod, l);
             int pct = tot == 0 ? 0 : (int)Math.Round(100.0 * tr / tot);
-            var b = RowButton($"{l}     {pct}%   ({tr}/{tot})");
+            bool isCurrent = string.Equals(l, cur, StringComparison.OrdinalIgnoreCase);
+            string tag = isCurrent ? "  ◀ current" : "";
+            var b = RowButton($"{l}     {pct}%   ({tr}/{tot}){tag}");
+            if (isCurrent) b.AddThemeColorOverride("font_color", GOLD);
             b.Pressed += () =>
             {
                 _lang = l;

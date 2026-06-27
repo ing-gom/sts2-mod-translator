@@ -25,6 +25,21 @@ public static class TranslationSync
     }
 
     /// <summary>
+    /// 게임이 지원하는 전체 언어 코드(14종, 선언 순서). 번역기는 현재 설정 언어뿐 아니라
+    /// 이 전체 목록을 편집 대상으로 노출한다. API 실패 시 현재 언어 1종만 폴백.
+    /// </summary>
+    public static IReadOnlyList<string> SupportedLanguages()
+    {
+        try
+        {
+            var langs = LocManager.Languages;
+            if (langs != null && langs.Count > 0) return langs;
+        }
+        catch { /* 정적 생성자 미초기화 등 — 폴백 */ }
+        return new[] { CurrentLanguage() };
+    }
+
+    /// <summary>
     /// 디스크의 override 를 다시 읽어 현재 언어에 재주입 + 리포트 갱신(패널 'Reload' 버튼).
     /// 비어 있지 않은 값만 적용하므로 재시작 없이 편집분이 반영된다. 주입된 키 수 반환.
     /// </summary>
