@@ -130,6 +130,33 @@ public static class TranslationStore
         return (total, tr);
     }
 
+    /// <summary>
+    /// 한 테이블에 주입할 최종 dict 를 만든다. 키마다:
+    ///   - override 값이 비어있지 않으면 → 번역값
+    ///   - 아니면 → 원본 기본값(모드가 현재 언어를 동봉했으면 그 값, 없으면 eng)
+    /// 빈 값을 명시적으로 기본값으로 되돌리므로 "비우면 원문 복귀" 가 보장된다.
+    /// </summary>
+    public static Dictionary<string, string> BuildInjectTable(SupportedMod mod, string lang, string table)
+    {
+        var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
+        Dictionary<string, string>? shipped = null;
+        if (mod.ByLang.TryGetValue(lang, out var byTable) && byTable.TryGetValue(table, out var st))
+            shipped = st; // 모드가 현재 언어를 직접 동봉한 경우의 원본값
+
+        var ov = ReadJson(OverridePath(mod.Id, lang, table));
+        var result = new Dictionary<string, string>(eng.Count);
+        foreach (var key in eng.Keys)
+        {
+            if (ov.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v))
+                result[key] = v;                                   // 번역값
+            else if (shipped != null && shipped.TryGetValue(key, out var sv) && !string.IsNullOrEmpty(sv))
+                result[key] = sv;                                  // 동봉 원본(현재 언어)
+            else
+                result[key] = eng[key];                            // eng 기본값
+        }
+        return result;
+    }
+
     /// <summary>특정 테이블의 (총 키, 번역된 키).</summary>
     public static (int total, int translated) TableCoverage(SupportedMod mod, string lang, string table)
     {
@@ -172,6 +199,21 @@ public static class TranslationStore
         catch (Exception ex) { return (false, "JSON 파싱 오류: " + ex.Message); }
         try { WriteRaw(OverridePath(modId, lang, table), text); return (true, ""); }
         catch (Exception ex) { return (false, ex.Message); }
+    }
+
+    /// <summary>한 테이블의 override 를 소스 키 + 빈 값으로 덮어쓴다(= 전부 원문 복귀).</summary>
+    public static void ResetOverride(SupportedMod mod, string lang, string table)
+    {
+        var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
+        var empty = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var k in eng.Keys) empty[k] = "";
+        WriteJson(OverridePath(mod.Id, lang, table), empty);
+    }
+
+    /// <summary>한 모드/언어의 모든 테이블 override 를 초기화.</summary>
+    public static void ResetLanguage(SupportedMod mod, string lang)
+    {
+        foreach (var table in mod.EngByTable.Keys) ResetOverride(mod, lang, table);
     }
 
     /// <summary>외부 JSON 파일을 업로드: 템플릿 키는 유지하고 일치하는 값만 반영. (성공여부, 오류).</summary>

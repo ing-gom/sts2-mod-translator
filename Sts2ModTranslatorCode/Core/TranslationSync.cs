@@ -34,9 +34,33 @@ public static class TranslationSync
         if (mgr == null) return 0;
         _scan ??= ModLocScanner.Scan();
         string lang = mgr.Language;
-        if (string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase)) return 0;
-        TranslationStore.WriteReport(_scan, lang);
-        return Inject(mgr, _scan, lang);
+        int n = 0;
+        if (!string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase))
+        {
+            TranslationStore.WriteReport(_scan, lang);
+            n = Inject(mgr, _scan, lang);
+        }
+        RefreshLabels(mgr); // 이미 렌더된 라벨(메인메뉴 등)도 즉시 다시 읽게 통지
+        return n;
+    }
+
+    /// <summary>
+    /// 이미 렌더된 라벨/버튼을 즉시 다시 읽게 한다.
+    /// 게임의 LocTextLabel/NButton 등은 Godot 번역변경 알림(NOTIFICATION_TRANSLATION_CHANGED=2010)으로
+    /// 재로컬라이즈한다. LocManager.TriggerLocaleChange 는 같은 locale 이면 SetLocale 이 no-op 이라 알림이
+    /// 안 뜨므로, 트리 전체에 알림 2010 을 직접 전파한다.
+    /// </summary>
+    private static void RefreshLabels(LocManager mgr)
+    {
+        try
+        {
+            if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree && tree.Root != null)
+                tree.Root.PropagateNotification(2010); // NOTIFICATION_TRANSLATION_CHANGED
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] locale refresh 실패: {ex.Message}");
+        }
     }
 
     /// <summary>메인 메뉴 버튼 라벨 로크 키. "main_menu_ui" 테이블에 주입한다.</summary>
@@ -104,31 +128,28 @@ public static class TranslationSync
 
     private static int Inject(LocManager locMgr, ScanResult scan, string language)
     {
-        int mergedTables = 0, mergedKeys = 0;
+        int translated = 0;
         foreach (var mod in scan.Supported)
         {
-            var overrides = TranslationStore.LoadNonEmptyOverrides(mod, language);
-            foreach (var (table, dict) in overrides)
+            // 모든 테이블의 모든 키를 명시적으로 설정(번역값 or 원본 기본값).
+            // → 값을 비우면 기본값으로 되돌아온다(MergeWith 는 제거를 못 하므로 필수).
+            foreach (var table in mod.EngByTable.Keys)
             {
+                var dict = TranslationStore.BuildInjectTable(mod, language, table);
+                if (dict.Count == 0) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
-                if (lt == null) continue; // 해당 테이블이 게임에 없음(미로드) — 스킵
-                try
-                {
-                    lt.MergeWith(dict);
-                    mergedTables++;
-                    mergedKeys += dict.Count;
-                }
+                if (lt == null) continue; // 게임에 없는 테이블 — 스킵
+                try { lt.MergeWith(dict); }
                 catch (Exception ex)
                 {
-                    MainFile.Logger.Warn(
-                        $"[Sts2ModTranslator] merge 실패 {mod.Id}/{table}: {ex.Message}");
+                    MainFile.Logger.Warn($"[Sts2ModTranslator] merge 실패 {mod.Id}/{table}: {ex.Message}");
                 }
             }
+            translated += TranslationStore.Coverage(mod, language).translated;
         }
-        if (mergedKeys > 0)
-            MainFile.Logger.Info(
-                $"[Sts2ModTranslator] injected {mergedKeys} keys into {mergedTables} tables for '{language}'.");
-        return mergedKeys;
+        MainFile.Logger.Info(
+            $"[Sts2ModTranslator] applied translations for '{language}': {translated} active overrides.");
+        return translated;
     }
 
     private static LocTable? TryGetTable(LocManager locMgr, string table)

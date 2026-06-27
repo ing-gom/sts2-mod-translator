@@ -1,7 +1,9 @@
 using System;
 using System.Linq;
 using Godot;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using Sts2ModTranslator.Core;
 
@@ -265,6 +267,23 @@ public static class TranslatorPanel
             row.AddChild(edit); row.AddChild(up);
             ListVBox(list).AddChild(row);
         }
+
+        var footer = new HBoxContainer();
+        var mod = _mod; string lang = _lang;
+        var resetAll = ActionButton("Reset all files");
+        resetAll.Pressed += () => Confirm(
+            "Reset all files",
+            $"Clear ALL translations for {lang} in {mod.Name} and restore the original text?",
+            "Reset all",
+            () =>
+            {
+                TranslationStore.ResetLanguage(mod, lang);
+                TranslationSync.ReloadFromDisk();
+                SetStatus($"Reset all files for {lang}.", true, false);
+                RebuildContent();
+            });
+        footer.AddChild(resetAll);
+        _content!.AddChild(footer);
     }
 
     // ── 뷰: 편집기 ──────────────────────────────────────────
@@ -346,7 +365,20 @@ public static class TranslatorPanel
             SetStatus("Reloaded from disk.", true, false);
         };
         var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(_table);
-        footer.AddChild(save); footer.AddChild(reload); footer.AddChild(up);
+        var emod = _mod; string elang = _lang;
+        var reset = ActionButton("Reset");
+        reset.Pressed += () => Confirm(
+            "Reset file",
+            $"Clear all translations in {tbl}.json ({elang}) and restore the original text?",
+            "Reset",
+            () =>
+            {
+                TranslationStore.ResetOverride(emod, elang, tbl);
+                if (_editor != null) _editor.Text = TranslationStore.OverrideText(emod.Id, elang, tbl);
+                TranslationSync.ReloadFromDisk();
+                SetStatus("Reset to original.", true, false);
+            });
+        footer.AddChild(save); footer.AddChild(reload); footer.AddChild(up); footer.AddChild(reset);
         _content.AddChild(footer);
     }
 
@@ -433,6 +465,40 @@ public static class TranslatorPanel
         var b = new Button { Text = text, CustomMinimumSize = new Vector2(120, 40) };
         b.AddThemeFontSizeOverride("font_size", 18);
         return b;
+    }
+
+    /// <summary>게임 네이티브 Yes/No 모달(NVerticalPopup)로 확인. Yes 시 onYes 실행.</summary>
+    private static void Confirm(string title, string body, string yesLabel, Action onYes)
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree)
+        {
+            MainFile.Logger.Warn("[Sts2ModTranslator] no SceneTree — confirm 불가.");
+            return;
+        }
+        try
+        {
+            var packed = ResourceLoader.Load<PackedScene>(SceneHelper.GetScenePath("ui/vertical_popup"));
+            if (packed == null) { MainFile.Logger.Warn("[Sts2ModTranslator] vertical_popup 씬 없음."); return; }
+            var popup = packed.Instantiate<NVerticalPopup>();
+            tree.Root.AddChild(popup);
+            popup.SetText(title, body);
+            popup.YesButton.SetText(yesLabel);
+            popup.YesButton.IsYes = true;
+            popup.YesButton.Released += _ =>
+            {
+                try { onYes(); }
+                catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] confirm action 실패: {ex.Message}"); }
+                finally { if (GodotObject.IsInstanceValid(popup)) popup.QueueFree(); }
+            };
+            popup.NoButton.SetText("Cancel");
+            popup.NoButton.IsYes = false;
+            popup.NoButton.Visible = true;
+            popup.NoButton.Released += _ => { if (GodotObject.IsInstanceValid(popup)) popup.QueueFree(); };
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] confirm modal 실패: {ex.Message}");
+        }
     }
 
     private static Label Lbl(string text, Color c)
