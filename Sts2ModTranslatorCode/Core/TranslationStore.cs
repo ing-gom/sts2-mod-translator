@@ -11,22 +11,27 @@ namespace Sts2ModTranslator.Core;
 /// <summary>
 /// %APPDATA%\Sts2ModTranslator\ 의 파일 입출력 담당.
 ///
-/// 레이아웃:
-///   source/{id}/eng/{table}.json        — 원문(영어) 참조본. 매번 새로 씀(읽기 전용 취급).
-///   overrides/{id}/{lang}/{table}.json   — 번역 입력칸. 값이 비어 있으면 미번역(원문 fallback).
-///                                          기존 파일은 절대 덮어쓰지 않고, 새 키만 추가한다.
-///   supported_mods.json                  — 지원/미지원 모드 목록 + 진행률 리포트.
+/// 레이아웃(데이터 파일 확장자 = <see cref="DataExt"/>):
+///   source/{id}/eng/{table}.txt        — 원문(영어) 참조본. 매번 새로 씀(읽기 전용 취급).
+///   overrides/{id}/{lang}/{table}.txt   — 번역 입력칸. 값이 비어 있으면 미번역(원문 fallback).
+///                                         기존 파일은 절대 덮어쓰지 않고, 새 키만 추가한다.
+///   supported_mods.txt                  — 지원/미지원 모드 목록 + 진행률 리포트.
+/// 파일 내용은 모두 JSON 이지만, 확장자를 .json 으로 두면 STS2 ModManager 가 mods\ 트리의
+/// 모든 .json 을 매니페스트로 파싱 시도해 부팅 시 "missing id" 로그를 남기므로 .txt 로 저장한다.
 /// </summary>
 public static class TranslationStore
 {
     private static string? _rootCache;
 
     /// <summary>
+    /// 번역 데이터 파일 확장자. 내용은 JSON 이지만 .json 으로 두면 ModManager 가 매니페스트로
+    /// 오인해 부팅 로그에 "missing id" 가 쌓이므로 .txt 를 쓴다. (진짜 매니페스트만 .json 유지.)
+    /// </summary>
+    public const string DataExt = ".txt";
+
+    /// <summary>
     /// 번역 데이터 루트. 1순위 = 모드 폴더 내부의 Translations\ (DLL 옆),
     /// 쓰기 불가(예: Program Files 권한) 시 2순위 = %APPDATA%\Sts2ModTranslator\.
-    ///
-    /// 주의: STS2 ModManager 는 mods\ 트리의 모든 .json 을 매니페스트로 파싱 시도하므로
-    /// 여기 생기는 *.json 에 대해 부팅 시 무해한 "missing id" 로그가 남을 수 있다(동작엔 영향 없음).
     /// </summary>
     public static string Root
     {
@@ -57,8 +62,42 @@ public static class TranslationStore
             }
 
             _rootCache = chosen;
+            MigrateLegacyExtension(chosen); // 기존 .json 작업 파일 → .txt 1회 변환
             return chosen;
         }
+    }
+
+    /// <summary>
+    /// 이전 버전이 .json 으로 저장한 작업 파일(overrides/source/리포트)을 .txt 로 1회 변환.
+    /// exported\ 하위(배포용 매니페스트 등)는 건드리지 않는다. best-effort — 실패해도 무시.
+    /// </summary>
+    private static void MigrateLegacyExtension(string root)
+    {
+        foreach (var sub in new[] { "overrides", "source" })
+        {
+            string dir = Path.Combine(root, sub);
+            if (!Directory.Exists(dir)) continue;
+            try
+            {
+                // 열거 중 rename 으로 인한 문제 방지 — 목록을 먼저 확정.
+                foreach (var json in Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories))
+                    RenameToDataExt(json);
+            }
+            catch { /* 열거 실패 무시 */ }
+        }
+        RenameToDataExt(Path.Combine(root, "supported_mods.json"));
+    }
+
+    private static void RenameToDataExt(string jsonPath)
+    {
+        try
+        {
+            if (!File.Exists(jsonPath)) return;
+            string dst = jsonPath.Substring(0, jsonPath.Length - ".json".Length) + DataExt;
+            if (File.Exists(dst)) File.Delete(jsonPath); // 이미 변환됨 → 중복 .json 제거
+            else File.Move(jsonPath, dst);
+        }
+        catch { /* 개별 파일 실패 무시 */ }
     }
 
     private static bool TryEnsureWritable(string dir)
@@ -91,7 +130,7 @@ public static class TranslationStore
         Path.Combine(Root, "overrides", id, lang);
 
     public static string OverridePath(string id, string lang, string table) =>
-        Path.Combine(OverrideDir(id, lang), table + ".json");
+        Path.Combine(OverrideDir(id, lang), table + DataExt);
 
     /// <summary>
     /// 한 모드의 source(원문) 갱신 + override(번역칸) 템플릿 생성/증분.
@@ -106,7 +145,7 @@ public static class TranslationStore
             string srcDir = SourceDir(mod.Id, refLang);
             Directory.CreateDirectory(srcDir);
             foreach (var (table, dict) in tables)
-                WriteJson(Path.Combine(srcDir, table + ".json"), Sorted(dict));
+                WriteJson(Path.Combine(srcDir, table + DataExt), Sorted(dict));
         }
 
         // 2) 번역 입력칸: eng 키 기준, 기존 번역 보존 + 신규 키만 빈 값으로 추가.
@@ -192,7 +231,7 @@ public static class TranslationStore
     {
         try
         {
-            string p = OverridePath(modId, lang, table);
+            string p = ReadPath(OverridePath(modId, lang, table));
             return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8) : "{}";
         }
         catch { return "{}"; }
@@ -203,7 +242,7 @@ public static class TranslationStore
     {
         try
         {
-            string p = Path.Combine(SourceDir(modId, lang), table + ".json");
+            string p = ReadPath(Path.Combine(SourceDir(modId, lang), table + DataExt));
             return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8) : "{}";
         }
         catch { return "{}"; }
@@ -299,7 +338,7 @@ public static class TranslationStore
     /// 결과 레이아웃:
     ///   exported/{modId}_Translation/
     ///     {modId}_Translation.json                      — 매니페스트(dependencies: [Sts2ModTranslator])
-    ///     translations/{대상id}/{lang}/{table}.json     — 번역값(비어 있지 않은 키만)
+    ///     translations/{대상id}/{lang}/{table}.txt      — 번역값(JSON 내용, 비어 있지 않은 키만)
     /// 사용자는 이 폴더를 STS2 mods\ 에 넣거나 Workshop 에 올려 배포할 수 있다.
     /// 반환: (성공여부, 생성된 폴더 경로, 오류). 내보낼 번역이 하나도 없으면 실패.
     /// </summary>
@@ -331,7 +370,8 @@ public static class TranslationStore
                 {
                     var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
                     foreach (var kv in dict) sorted[kv.Key] = kv.Value;
-                    WriteJson(Path.Combine(trDir, lang, table + ".json"), sorted);
+                    // 번역 데이터는 .txt 로 — 설치 시 ModManager 의 'missing id' 로그 회피.
+                    WriteJson(Path.Combine(trDir, lang, table + DataExt), sorted);
                 }
             }
 
@@ -387,7 +427,7 @@ public static class TranslationStore
         return string.IsNullOrEmpty(r) ? "Mod" : r;
     }
 
-    /// <summary>지원/미지원 목록 + 진행률 리포트를 supported_mods.json 으로 출력.</summary>
+    /// <summary>지원/미지원 목록 + 진행률 리포트를 supported_mods.txt(JSON 내용)로 출력.</summary>
     public static void WriteReport(ScanResult scan, string lang)
     {
         var supported = new List<object>();
@@ -428,7 +468,7 @@ public static class TranslationStore
                 .ToArray(),
         };
 
-        WriteRaw(Path.Combine(Root, "supported_mods.json"),
+        WriteRaw(Path.Combine(Root, "supported_mods" + DataExt),
             JsonSerializer.Serialize(report, WriteOpts));
     }
 
@@ -452,6 +492,7 @@ public static class TranslationStore
         error = "";
         try
         {
+            path = ReadPath(path);
             if (!File.Exists(path)) return true;
             string text = File.ReadAllText(path, Encoding.UTF8);
             if (string.IsNullOrWhiteSpace(text)) return true;
@@ -469,6 +510,21 @@ public static class TranslationStore
 
     private static Dictionary<string, string> ReadJson(string path)
         => TryReadJson(path, out var d, out _) ? d : new();
+
+    /// <summary>
+    /// 읽기용 경로 보정: .txt 가 없고 레거시 .json 만 있으면 .json 경로를 돌려준다.
+    /// (확장자 마이그레이션이 어떤 이유로 누락된 파일도 안전하게 읽기 위함.)
+    /// </summary>
+    private static string ReadPath(string path)
+    {
+        try
+        {
+            if (File.Exists(path) || !path.EndsWith(DataExt, StringComparison.Ordinal)) return path;
+            string legacy = path.Substring(0, path.Length - DataExt.Length) + ".json";
+            return File.Exists(legacy) ? legacy : path;
+        }
+        catch { return path; }
+    }
 
     private static void WriteJson(string path, object dict) =>
         WriteRaw(path, JsonSerializer.Serialize(dict, WriteOpts));

@@ -46,8 +46,10 @@ You can turn your work into its own distributable mod — like other mods refere
   translations/
     <targetModId>/                     # the mod you're translating
       <lang>/                          # e.g. kor, zhs, jpn
-        <table>.json                   # { "loc_key": "translated text", ... }
+        <table>.txt                    # JSON content: { "loc_key": "translated text", ... }
 ```
+
+> Data files use a `.txt` extension (their content is still JSON). Only the manifest is `.json` — this keeps the game's mod loader from trying to parse each translation file as a manifest and logging a harmless "missing id" warning for it at boot. Legacy `.json` data files are still read for backward compatibility.
 
 The manifest must depend on this mod so the translations get applied:
 
