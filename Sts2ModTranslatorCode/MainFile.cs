@@ -9,10 +9,10 @@ namespace Sts2ModTranslator;
 ///
 /// 동작 (Phase 1, 화면 패널 없음):
 ///   1. 부팅/언어전환 시 로드된 모드 중 `res://{id}/localization/<lang>/*.json` 을 동봉한 모드만 탐지.
-///   2. 각 지원 모드의 eng 텍스트를 %APPDATA%\Sts2ModTranslator\ 아래로 추출:
-///        source/{id}/eng/{table}.json   (원문 참조, 읽기 전용)
-///        overrides/{id}/{lang}/{table}.json (번역 입력칸 — 값 비어 있음)
-///   3. 지원/미지원 모드 목록 + 번역 진행률을 supported_mods.json 으로 출력.
+///   2. 각 지원 모드의 eng 텍스트를 %APPDATA%\Sts2ModTranslator\ 아래로 추출(내용은 JSON, 확장자는 .txt):
+///        source/{id}/eng/{table}.txt   (원문 참조, 읽기 전용)
+///        overrides/{id}/{lang}/{table}.txt (번역 입력칸 — 값 비어 있음)
+///   3. 지원/미지원 모드 목록 + 번역 진행률을 supported_mods.txt 로 출력.
 ///   4. LocManager.SetLanguage 직후 overrides 의 (비어 있지 않은) 값을 해당 로크 테이블에 MergeWith.
 ///
 /// 모든 경로/열거가 게임 자신의 규약(GetModdedLocTables: res://{id}/localization/{lang}/{file})을

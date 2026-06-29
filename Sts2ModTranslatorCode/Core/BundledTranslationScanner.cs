@@ -74,8 +74,10 @@ public sealed class BundledTranslations
 /// 로드된 모드 중 번역 모드(= Sts2ModTranslator 를 참조해 번역 JSON 을 동봉한 모드)를 읽는다.
 ///
 /// 규약 레이아웃 (게임의 res:// 경로 위):
-///   res://{번역모드id}/translations/{대상모드id}/{lang}/{table}.json   ({string:string} JSON)
+///   res://{번역모드id}/translations/{대상모드id}/{lang}/{table}.txt   ({string:string} JSON 내용)
 ///
+/// 파일 확장자는 .txt(<see cref="TranslationStore.DataExt"/>) — .json 으로 두면 ModManager 가
+/// 매니페스트로 파싱 시도해 'missing id' 로그를 남기기 때문. 구버전 .json 데이터도 함께 읽는다.
 /// 이 경로만 약속하면 별도 DLL 없이 순수 데이터 모드로 번역을 배포할 수 있다(baselib 데이터 모드와 동일).
 /// </summary>
 public static class BundledTranslationScanner
@@ -98,9 +100,11 @@ public static class BundledTranslationScanner
             foreach (string lang in ModLocScanner.SafeDirs(tdir))
             {
                 string ldir = $"{tdir}/{lang}";
-                foreach (string file in ModLocScanner.SafeFiles(ldir).Where(f => f.EndsWith(".json")))
+                foreach (string file in ModLocScanner.SafeFiles(ldir)
+                             .Where(f => f.EndsWith(TranslationStore.DataExt) || f.EndsWith(".json")))
                 {
-                    string table = file.Substring(0, file.Length - ".json".Length);
+                    int dot = file.LastIndexOf('.');
+                    string table = dot > 0 ? file.Substring(0, dot) : file;
                     var dict = ModLocScanner.ReadResJson($"{ldir}/{file}");
                     var nonEmpty = dict.Where(kv => !string.IsNullOrEmpty(kv.Value))
                                        .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
