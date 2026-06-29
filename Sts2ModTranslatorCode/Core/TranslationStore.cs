@@ -113,7 +113,10 @@ public static class TranslationStore
         foreach (var (table, engDict) in mod.EngByTable)
         {
             string ovrPath = OverridePath(mod.Id, lang, table);
-            var existing = ReadJson(ovrPath);
+            // JSON 이 깨진 파일은 절대 덮어쓰지 않는다(사용자 번역 유실 방지).
+            // UI 가 '오류'로 표시하고, 편집기에서 고쳐 저장하면 정상화된다.
+            if (File.Exists(ovrPath) && !TryReadJson(ovrPath, out _, out _)) continue;
+            var existing = ReadJson(ovrPath); // 없음/빈/정상 → dict
             var merged = new SortedDictionary<string, string>(StringComparer.Ordinal);
             foreach (var key in engDict.Keys)
                 merged[key] = existing.TryGetValue(key, out var v) ? v : ""; // 빈 값 = 미번역
@@ -157,13 +160,20 @@ public static class TranslationStore
         return result;
     }
 
-    /// <summary>특정 테이블의 (총 키, 번역된 키).</summary>
-    public static (int total, int translated) TableCoverage(SupportedMod mod, string lang, string table)
+    /// <summary>
+    /// UI 파일 목록용 상태: (총 키, 번역된 키, JSON 깨짐 여부).
+    /// invalid=true 면 파일을 파싱할 수 없어 번역이 적용되지 않는 상태(편집기에서 수정 필요).
+    /// 번역 카운트는 템플릿(eng) 키 집합 안에서만 센다.
+    /// </summary>
+    public static (int total, int translated, bool invalid) TableStatus(
+        SupportedMod mod, string lang, string table)
     {
-        int total = mod.EngByTable.TryGetValue(table, out var e) ? e.Count : 0;
-        var ov = ReadJson(OverridePath(mod.Id, lang, table));
-        int tr = ov.Count(kv => !string.IsNullOrEmpty(kv.Value));
-        return (total, tr);
+        var keys = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
+        int total = keys.Count;
+        if (!TryReadJson(OverridePath(mod.Id, lang, table), out var ov, out _))
+            return (total, 0, true); // JSON 형식 오류 — 적용 안 됨
+        int tr = ov.Count(kv => keys.ContainsKey(kv.Key) && !string.IsNullOrEmpty(kv.Value));
+        return (total, tr, false);
     }
 
     /// <summary>override 파일의 raw 텍스트(편집기 표시용). 없으면 "{}".</summary>
@@ -306,20 +316,34 @@ public static class TranslationStore
         return s;
     }
 
-    private static Dictionary<string, string> ReadJson(string path)
+    /// <summary>
+    /// JSON 파일을 {string:string} 으로 읽기 시도.
+    /// 반환 true = 정상(파일 없음/빈 파일 포함), false = JSON 형식 오류.
+    /// dict 는 성공 시 내용(없음/빈 파일이면 빈 dict), error 에 실패 사유.
+    /// </summary>
+    private static bool TryReadJson(string path, out Dictionary<string, string> dict, out string error)
     {
+        dict = new();
+        error = "";
         try
         {
-            if (!File.Exists(path)) return new();
+            if (!File.Exists(path)) return true;
             string text = File.ReadAllText(path, Encoding.UTF8);
-            if (string.IsNullOrWhiteSpace(text)) return new();
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(text) ?? new();
+            if (string.IsNullOrWhiteSpace(text)) return true;
+            var d = JsonSerializer.Deserialize<Dictionary<string, string>>(text);
+            if (d == null) { error = "최상위가 객체가 아닙니다"; return false; }
+            dict = d;
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            return new();
+            error = ex.Message;
+            return false;
         }
     }
+
+    private static Dictionary<string, string> ReadJson(string path)
+        => TryReadJson(path, out var d, out _) ? d : new();
 
     private static void WriteJson(string path, object dict) =>
         WriteRaw(path, JsonSerializer.Serialize(dict, WriteOpts));

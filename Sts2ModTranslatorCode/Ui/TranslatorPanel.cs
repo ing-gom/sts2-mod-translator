@@ -265,23 +265,35 @@ public static class TranslatorPanel
     {
         if (_mod == null) { Navigate(View.Mods); return; }
         var list = ScrollList();
+        int problems = 0;
         foreach (var table in _mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal))
         {
             var t = table;
-            var (tot, tr) = TranslationStore.TableCoverage(_mod, _lang, t);
+            var (tot, tr, invalid) = TranslationStore.TableStatus(_mod, _lang, t);
             int pct = tot == 0 ? 0 : (int)Math.Round(100.0 * tr / tot);
 
             var row = new HBoxContainer();
-            row.AddChild(new Label
+            // 깨진 JSON 은 빨간색 + 경고로 표시(번역 미적용 상태). 정상은 진행률만.
+            var lbl = new Label
             {
-                Text = $"{t}.json     {pct}%  ({tr}/{tot})",
+                Text = invalid
+                    ? $"{t}.json     ⚠ JSON error — open & fix"
+                    : $"{t}.json     {pct}%  ({tr}/{tot})",
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            });
+            };
+            lbl.AddThemeColorOverride("font_color", invalid ? RED : WHITE);
+            if (invalid) problems++;
+            row.AddChild(lbl);
             var edit = ActionButton("Edit"); edit.Pressed += () => { _table = t; Navigate(View.Editor); };
             var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(t);
             row.AddChild(edit); row.AddChild(up);
             ListVBox(list).AddChild(row);
         }
+
+        if (problems > 0)
+            SetStatus(
+                $"⚠ {problems} file(s) have invalid JSON and are NOT applied. Open each, fix the JSON, and Save.",
+                true, true);
 
         var footer = new HBoxContainer();
         var mod = _mod; string lang = _lang;

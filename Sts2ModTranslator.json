@@ -3,7 +3,7 @@
   "name": "STS2 Mod Translator",
   "author": "inggom",
   "description": "Extracts the localized text of other installed mods (any mod that ships a localization/<lang>/*.json folder) into editable template files, and injects your translations back at runtime. Lets you translate other people's mods without rebuilding them.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],
