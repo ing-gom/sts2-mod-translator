@@ -30,6 +30,15 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 [*]Untranslated entries safely fall back to the original text
 [/list]
 
+[h2]Share translations as a standalone mod[/h2]
+Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Other players install your translation mod (plus this one) and the text applies automatically, with no editing.
+[list]
+[*]Pick a mod, then press [b]Export as mod[/b] — it writes a ready-to-ship mod folder (manifest + your translations for every language) to [i]%APPDATA%\Sts2ModTranslator\exported[/i].
+[*]Drop that folder into [i]<STS2>/mods/[/i] or upload it to the Workshop to share.
+[*]No DLL or coding needed — a translation mod is pure data plus a manifest that declares [b]dependencies: ["Sts2ModTranslator"][/b].
+[*]Installed translation packs are detected at boot and applied last, so your own in-editor edits still win over a pack, and a pack wins over the original text.
+[/list]
+
 [h2]Where the files are[/h2]
 Translations live under the mod's [i]Translations[/i] folder (use [b]Open Folder[/b]). Each mod/language has editable [i]overrides[/i] plus a read-only [i]source[/i] reference of the original text.
 

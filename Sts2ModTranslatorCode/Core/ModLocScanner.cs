@@ -37,6 +37,12 @@ public sealed class ScanResult
 {
     public List<SupportedMod> Supported = new();
     public List<UnsupportedMod> Unsupported = new();
+
+    /// <summary>
+    /// 설치된 "번역 모드"(Sts2ModTranslator 를 참조해 번역 JSON 을 동봉한 모드)가 제공하는
+    /// 번역의 집계본. 부팅 시 자동 감지되어 런타임 주입에 사용된다.
+    /// </summary>
+    public BundledTranslations Bundled = new();
 }
 
 /// <summary>
@@ -59,9 +65,14 @@ public static class ModLocScanner
             if (string.IsNullOrEmpty(id)) continue;
             if (id == MainFile.ModId) continue; // 자기 자신 제외
 
+            // 이 모드가 "번역 모드"(translations/ 동봉)인지 먼저 본다. 번역 JSON 을 모아 두고,
+            // localization/ 이 없더라도 미지원으로 분류하지 않는다(번역 모드는 원래 localization 이 없음).
+            bool isProvider = BundledTranslationScanner.TryRead(id, name, result.Bundled);
+
             string locRoot = $"res://{id}/localization";
             if (!Godot.DirAccess.DirExistsAbsolute(locRoot))
             {
+                if (isProvider) continue; // 번역 모드 — 미지원 아님
                 result.Unsupported.Add(new UnsupportedMod
                 {
                     Id = id, Name = name,
@@ -105,13 +116,13 @@ public static class ModLocScanner
 
     // ── Godot res:// 헬퍼 ───────────────────────────────────────
 
-    private static List<string> SafeDirs(string resDir)
+    internal static List<string> SafeDirs(string resDir)
     {
         try { return Godot.DirAccess.GetDirectoriesAt(resDir).Where(s => !string.IsNullOrEmpty(s)).ToList(); }
         catch { return new(); }
     }
 
-    private static List<string> SafeFiles(string resDir)
+    internal static List<string> SafeFiles(string resDir)
     {
         try { return Godot.DirAccess.GetFilesAt(resDir).Where(s => !string.IsNullOrEmpty(s)).ToList(); }
         catch { return new(); }

@@ -198,13 +198,22 @@ public static class TranslationSync
     private static int Inject(LocManager locMgr, ScanResult scan, string language)
     {
         int translated = 0;
+        var supportedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in scan.Supported)
         {
-            // 모든 테이블의 모든 키를 명시적으로 설정(번역값 or 원본 기본값).
-            // → 값을 비우면 기본값으로 되돌아온다(MergeWith 는 제거를 못 하므로 필수).
-            foreach (var table in mod.EngByTable.Keys)
+            supportedIds.Add(mod.Id);
+            // 이 대상 모드에 설치된 번역 모드가 제공한 (언어별) 번역.
+            var bundledForMod = scan.Bundled.ForTargetLang(mod.Id, language);
+
+            // eng 테이블 ∪ 번역 모드가 제공한 테이블. 모든 키를 명시적으로 설정(번역값 or 원본 기본값).
+            // → 로컬 번역을 비우면 번역 모드값→원문 순으로 되돌아온다(MergeWith 는 제거를 못 하므로 필수).
+            var tables = new HashSet<string>(mod.EngByTable.Keys, StringComparer.Ordinal);
+            if (bundledForMod != null) foreach (var t in bundledForMod.Keys) tables.Add(t);
+
+            foreach (var table in tables)
             {
-                var dict = TranslationStore.BuildInjectTable(mod, language, table);
+                var bundledTbl = bundledForMod != null && bundledForMod.TryGetValue(table, out var bt) ? bt : null;
+                var dict = TranslationStore.BuildInjectTable(mod, language, table, bundledTbl);
                 if (dict.Count == 0) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue; // 게임에 없는 테이블 — 스킵
@@ -216,8 +225,29 @@ public static class TranslationSync
             }
             translated += TranslationStore.Coverage(mod, language).translated;
         }
+
+        // 스캔에서 "지원" 으로 잡히지 않은 대상(localization 폴더 없이 런타임에 로크 테이블을
+        // 등록하는 모드 등)도 번역 모드가 번역했다면 직접 주입한다(원문 기준이 없으므로 그대로 merge).
+        foreach (var (targetId, byLang) in scan.Bundled.ByTarget)
+        {
+            if (supportedIds.Contains(targetId)) continue;
+            if (!byLang.TryGetValue(language, out var byTable)) continue;
+            foreach (var (table, dict) in byTable)
+            {
+                if (dict.Count == 0) continue;
+                LocTable? lt = TryGetTable(locMgr, table);
+                if (lt == null) continue;
+                try { lt.MergeWith(new Dictionary<string, string>(dict)); }
+                catch (Exception ex)
+                {
+                    MainFile.Logger.Warn($"[Sts2ModTranslator] bundled merge 실패 {targetId}/{table}: {ex.Message}");
+                }
+            }
+        }
+
         MainFile.Logger.Info(
-            $"[Sts2ModTranslator] applied translations for '{language}': {translated} active overrides.");
+            $"[Sts2ModTranslator] applied translations for '{language}': {translated} active overrides"
+            + (scan.Bundled.Any ? $", {scan.Bundled.Providers.Count} translation pack(s)" : "") + ".");
         return translated;
     }
 

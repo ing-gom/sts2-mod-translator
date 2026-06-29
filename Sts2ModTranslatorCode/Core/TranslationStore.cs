@@ -134,12 +134,16 @@ public static class TranslationStore
     }
 
     /// <summary>
-    /// 한 테이블에 주입할 최종 dict 를 만든다. 키마다:
-    ///   - override 값이 비어있지 않으면 → 번역값
-    ///   - 아니면 → 원본 기본값(모드가 현재 언어를 동봉했으면 그 값, 없으면 eng)
-    /// 빈 값을 명시적으로 기본값으로 되돌리므로 "비우면 원문 복귀" 가 보장된다.
+    /// 한 테이블에 주입할 최종 dict 를 만든다. 키마다 우선순위:
+    ///   1) 로컬 override 값(비어 있지 않으면) — 사용자가 인게임 에디터로 직접 한 번역
+    ///   2) 설치된 번역 모드의 값(bundled, 비어 있지 않으면)
+    ///   3) 모드가 현재 언어를 직접 동봉했으면 그 원본값
+    ///   4) eng 기본값
+    /// 모든 키를 명시적으로 설정하므로 "로컬 번역을 비우면 (번역 모드 → 원문 순으로) 복귀" 가 보장된다.
+    /// bundled 는 설치된 번역 모드가 이 (대상모드, 언어, 테이블)에 제공한 (키→값). 없으면 null/빈 dict.
     /// </summary>
-    public static Dictionary<string, string> BuildInjectTable(SupportedMod mod, string lang, string table)
+    public static Dictionary<string, string> BuildInjectTable(
+        SupportedMod mod, string lang, string table, IReadOnlyDictionary<string, string>? bundled = null)
     {
         var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
         Dictionary<string, string>? shipped = null;
@@ -147,15 +151,22 @@ public static class TranslationStore
             shipped = st; // 모드가 현재 언어를 직접 동봉한 경우의 원본값
 
         var ov = ReadJson(OverridePath(mod.Id, lang, table));
-        var result = new Dictionary<string, string>(eng.Count);
-        foreach (var key in eng.Keys)
+
+        // eng 키 ∪ bundled 키 — 번역 모드가 eng 에 없는 키를 줘도 누락 없이 주입.
+        var keys = new HashSet<string>(eng.Keys, StringComparer.Ordinal);
+        if (bundled != null) foreach (var k in bundled.Keys) keys.Add(k);
+
+        var result = new Dictionary<string, string>(keys.Count);
+        foreach (var key in keys)
         {
             if (ov.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v))
-                result[key] = v;                                   // 번역값
+                result[key] = v;                                   // 1) 로컬 번역값
+            else if (bundled != null && bundled.TryGetValue(key, out var bv) && !string.IsNullOrEmpty(bv))
+                result[key] = bv;                                  // 2) 설치된 번역 모드
             else if (shipped != null && shipped.TryGetValue(key, out var sv) && !string.IsNullOrEmpty(sv))
-                result[key] = sv;                                  // 동봉 원본(현재 언어)
-            else
-                result[key] = eng[key];                            // eng 기본값
+                result[key] = sv;                                  // 3) 동봉 원본(현재 언어)
+            else if (eng.TryGetValue(key, out var ev))
+                result[key] = ev;                                  // 4) eng 기본값
         }
         return result;
     }
@@ -267,6 +278,115 @@ public static class TranslationStore
         return byTable;
     }
 
+    // ── 번역 모드 내보내기 ──────────────────────────────────────
+
+    /// <summary>
+    /// 내보낸 번역 모드들이 모이는 폴더. 항상 %APPDATA%\Sts2ModTranslator\exported 를 쓴다
+    /// (Root 가 모드 폴더 내부일 수 있는데, 그 안에 또 다른 모드 매니페스트를 두면 게임이
+    /// 중첩 모드로 오인할 수 있으므로 의도적으로 모드 폴더 밖으로 내보낸다).
+    /// </summary>
+    public static string ExportRoot
+    {
+        get
+        {
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            return Path.Combine(appData, "Sts2ModTranslator", "exported");
+        }
+    }
+
+    /// <summary>
+    /// 한 대상 모드의 (비어 있지 않은) 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보낸다.
+    /// 결과 레이아웃:
+    ///   exported/{modId}_Translation/
+    ///     {modId}_Translation.json                      — 매니페스트(dependencies: [Sts2ModTranslator])
+    ///     translations/{대상id}/{lang}/{table}.json     — 번역값(비어 있지 않은 키만)
+    /// 사용자는 이 폴더를 STS2 mods\ 에 넣거나 Workshop 에 올려 배포할 수 있다.
+    /// 반환: (성공여부, 생성된 폴더 경로, 오류). 내보낼 번역이 하나도 없으면 실패.
+    /// </summary>
+    public static (bool ok, string path, string error) ExportMod(SupportedMod mod, string author = "")
+    {
+        try
+        {
+            // 1) 비어 있지 않은 번역을 가진 언어/테이블만 수집.
+            var langs = new List<(string lang, Dictionary<string, Dictionary<string, string>> tables)>();
+            foreach (var lang in AllOverrideLangs(mod.Id))
+            {
+                var tables = LoadNonEmptyOverrides(mod, lang);
+                if (tables.Count > 0) langs.Add((lang, tables));
+            }
+            if (langs.Count == 0)
+                return (false, "", "내보낼 번역이 없습니다 — 먼저 한 항목 이상 번역하세요.");
+
+            string newId = Sanitize(mod.Id) + "_Translation";
+            string modDir = Path.Combine(ExportRoot, newId);
+            // 기존 내보내기는 새로 덮어쓴다(매번 최신 번역 반영). translations 하위만 청소.
+            string trDir = Path.Combine(modDir, BundledTranslationScanner.FolderName, mod.Id);
+            if (Directory.Exists(trDir)) Directory.Delete(trDir, recursive: true);
+
+            var langCodes = new List<string>();
+            foreach (var (lang, tables) in langs)
+            {
+                langCodes.Add(lang);
+                foreach (var (table, dict) in tables)
+                {
+                    var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var kv in dict) sorted[kv.Key] = kv.Value;
+                    WriteJson(Path.Combine(trDir, lang, table + ".json"), sorted);
+                }
+            }
+
+            // 2) 매니페스트.
+            var manifest = new
+            {
+                id = newId,
+                name = mod.Name + " Translation",
+                author,
+                description =
+                    $"Translation pack for \"{mod.Name}\" ({string.Join(", ", langCodes)}). "
+                    + "Requires the STS2 Mod Translator mod to apply.",
+                version = "1.0.0",
+                has_pck = false,
+                has_dll = false,
+                dependencies = new[] { MainFile.ModId },
+                affects_gameplay = false,
+            };
+            WriteRaw(Path.Combine(modDir, newId + ".json"),
+                JsonSerializer.Serialize(manifest, WriteOpts));
+
+            return (true, modDir, "");
+        }
+        catch (Exception ex)
+        {
+            return (false, "", ex.Message);
+        }
+    }
+
+    /// <summary>해당 대상 모드의 overrides\{id}\ 아래 존재하는 언어 폴더 목록.</summary>
+    private static List<string> AllOverrideLangs(string id)
+    {
+        string dir = Path.Combine(Root, "overrides", id);
+        if (!Directory.Exists(dir)) return new();
+        try
+        {
+            return Directory.GetDirectories(dir)
+                .Select(Path.GetFileName)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Select(s => s!)
+                .ToList();
+        }
+        catch { return new(); }
+    }
+
+    /// <summary>모드 id 로 쓸 수 있도록 파일시스템 안전 문자만 남긴다.</summary>
+    private static string Sanitize(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+            sb.Append(char.IsLetterOrDigit(c) || c == '_' || c == '-' ? c : '_');
+        string r = sb.ToString();
+        return string.IsNullOrEmpty(r) ? "Mod" : r;
+    }
+
     /// <summary>지원/미지원 목록 + 진행률 리포트를 supported_mods.json 으로 출력.</summary>
     public static void WriteReport(ScanResult scan, string lang)
     {
@@ -300,6 +420,11 @@ public static class TranslationStore
             unsupported = scan.Unsupported
                 .OrderBy(m => m.Id, StringComparer.Ordinal)
                 .Select(m => new { id = m.Id, name = m.Name, reason = m.Reason })
+                .ToArray(),
+            // 설치된 번역 모드(Sts2ModTranslator 를 참조해 번역을 동봉한 모드)들.
+            translation_packs = scan.Bundled.Providers
+                .OrderBy(p => p.Id, StringComparer.Ordinal)
+                .Select(p => new { id = p.Id, name = p.Name, targets = p.Targets.ToArray(), keys = p.Keys })
                 .ToArray(),
         };
 

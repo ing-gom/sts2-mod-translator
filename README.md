@@ -32,6 +32,38 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 
 Translations live under the mod's `Translations/` folder (use **Open Folder**), with a fallback to `%APPDATA%\Sts2ModTranslator\` if the mod folder isn't writable.
 
+## Sharing translations as a standalone mod
+
+You can turn your work into its own distributable mod — like other mods reference **baselib**, a *translation mod* just references this one. Other players install your translation mod (plus this one) and the text is applied automatically, no editing required.
+
+**Export from the editor:** pick a mod, then press **Export as mod**. It writes a ready-to-ship mod folder to `%APPDATA%\Sts2ModTranslator\exported\<id>_Translation\` containing a manifest and your non-empty translations for every language you've worked on. Drop that folder into `<STS2>/mods/` (or upload it to the Workshop) to share.
+
+**Or author one by hand** — a translation mod needs no DLL, just data:
+
+```
+<YourTranslationModId>/
+  <YourTranslationModId>.json          # manifest, see below
+  translations/
+    <targetModId>/                     # the mod you're translating
+      <lang>/                          # e.g. kor, zhs, jpn
+        <table>.json                   # { "loc_key": "translated text", ... }
+```
+
+The manifest must depend on this mod so the translations get applied:
+
+```json
+{
+  "id": "MyDownfallKorean",
+  "name": "Downfall — Korean",
+  "version": "1.0.0",
+  "has_dll": false,
+  "dependencies": ["Sts2ModTranslator"],
+  "affects_gameplay": false
+}
+```
+
+Installed translation mods are detected at boot, shown in the panel (marked *translation pack installed*), and merged into the game last — so your own in-editor translations still take priority over a pack, and a pack takes priority over the original text.
+
 ### Translation tips
 
 Keep these intact and change only the human-readable text:

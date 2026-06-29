@@ -205,10 +205,16 @@ public static class TranslatorPanel
         foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
         {
             var mod = m;
-            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]");
+            // 설치된 번역 모드가 이 대상을 번역 중이면 표시(런타임에 자동 적용됨).
+            string pack = scan.Bundled.HasTarget(m.Id) ? "   ◆ translation pack installed" : "";
+            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{pack}");
+            if (!string.IsNullOrEmpty(pack)) b.AddThemeColorOverride("font_color", GOLD);
             b.Pressed += () => { _mod = mod; Navigate(View.Languages); };
             ListVBox(list).AddChild(b);
         }
+        if (scan.Bundled.Any)
+            ListVBox(list).AddChild(Lbl(
+                $"({scan.Bundled.Providers.Count} translation pack(s) installed — applied automatically)", GOLD));
         if (scan.Unsupported.Count > 0)
             ListVBox(list).AddChild(Lbl($"({scan.Unsupported.Count} unsupported mods — no localization folder)", GRAY));
 
@@ -258,6 +264,27 @@ public static class TranslatorPanel
             };
             ListVBox(list).AddChild(b);
         }
+
+        // 하단 액션: 이 모드의 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보내기.
+        var mod = _mod;
+        var footer = new HBoxContainer();
+        var export = ActionButton("Export as mod");
+        export.CustomMinimumSize = new Vector2(180, 40);
+        export.Pressed += () => ExportAsMod(mod);
+        footer.AddChild(export);
+        footer.AddChild(Lbl(
+            "  Package your translations as a standalone mod (depends on this one) to share.", GRAY));
+        _content!.AddChild(footer);
+    }
+
+    // ── 번역 모드 내보내기 ──────────────────────────────────
+    private static void ExportAsMod(SupportedMod mod)
+    {
+        var (ok, path, err) = TranslationStore.ExportMod(mod);
+        if (!ok) { SetStatus("Export failed: " + err, true, true); return; }
+        SetStatus($"Exported translation mod → {path}", true, false);
+        try { OS.ShellShowInFileManager(path); }
+        catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] export open 실패: {ex.Message}"); }
     }
 
     // ── 뷰: 파일(테이블) 목록 ───────────────────────────────
