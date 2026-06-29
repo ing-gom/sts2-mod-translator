@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MegaCrit.Sts2.Core.Localization;
+using MegaCrit.Sts2.Core.Modding;
 
 namespace Sts2ModTranslator.Core;
 
@@ -11,8 +13,9 @@ namespace Sts2ModTranslator.Core;
 /// </summary>
 public static class TranslationSync
 {
-    private static ScanResult? _scan;                       // 1회 스캔 캐시
-    private static readonly HashSet<string> _prepedLangs = new(); // fs 준비 완료 언어
+    private static ScanResult? _scan;                       // 최신 스캔 캐시
+    private static int _lastLoadedCount = -1;               // 마지막 스캔 시점의 로드된 모드 수
+    private static readonly HashSet<string> _prepped = new(); // "lang\0modId" → fs 준비 완료
 
     /// <summary>인게임 패널용: 최근 스캔 결과(지원/미지원 모드).</summary>
     public static ScanResult? CurrentScan => _scan;
@@ -47,13 +50,14 @@ public static class TranslationSync
     {
         var mgr = LocManager.Instance;
         if (mgr == null) return 0;
-        _scan ??= ModLocScanner.Scan();
+        var scan = EnsureScan();
+        if (scan == null) return 0;
         string lang = mgr.Language;
         int n = 0;
         if (!string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase))
         {
-            TranslationStore.WriteReport(_scan, lang);
-            n = Inject(mgr, _scan, lang);
+            TranslationStore.WriteReport(scan, lang);
+            n = Inject(mgr, scan, lang);
         }
         RefreshLabels(mgr); // 이미 렌더된 라벨(메인메뉴 등)도 즉시 다시 읽게 통지
         return n;
@@ -104,41 +108,91 @@ public static class TranslationSync
 
         EnsureUiStrings(locMgr);   // 메뉴 라벨은 모든 언어에서 필요
 
-        // 모드가 아직 로드되지 않은 이른 SetLanguage 호출 → 스킵(이후 호출에서 처리됨).
-        var scan = _scan;
-        if (scan == null)
-        {
-            scan = ModLocScanner.Scan();
-            if (scan.Supported.Count == 0 && scan.Unsupported.Count == 0)
-                return; // 로드된 모드 없음 — 아직 이르다, 캐시하지 않음
-            _scan = scan;
-            MainFile.Logger.Info(
-                $"[Sts2ModTranslator] scan: supported={scan.Supported.Count} unsupported={scan.Unsupported.Count}");
-        }
+        // 모드가 아직 로드되지 않은 이른 SetLanguage 호출 → null(이후 호출에서 처리됨).
+        var scan = EnsureScan();
+        if (scan == null) return;
 
         // eng 로 플레이 중이면 번역 대상 아님(원문). 템플릿/주입 모두 불필요.
-        bool isSource = string.Equals(language, "eng", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(language, "eng", StringComparison.OrdinalIgnoreCase)) return;
 
-        // 언어별 1회: 원문 추출 + 번역 템플릿 생성 + 리포트.
-        if (!isSource && !_prepedLangs.Contains(language))
+        EnsureTemplates(scan, language); // 신규(또는 늦게 로드된) 모드만 증분 준비
+        Inject(locMgr, scan, language);
+    }
+
+    /// <summary>
+    /// 메인 메뉴 준비 시점(= 모드 로드 완료가 보장되는 늦은 지점)에서 한 번 더 스캔+주입.
+    /// 부팅 때 SetLanguage 가 모드 로드보다 먼저 불려 번역이 누락되던 레이스를 보정한다.
+    /// 부팅 SetLanguage 가 단 한 번뿐인 환경(사용자가 언어를 바꾸지 않음)도 여기서 구제된다.
+    /// </summary>
+    public static void OnMainMenuReady(LocManager locMgr)
+    {
+        if (locMgr == null) return;
+        try
         {
-            foreach (var mod in scan.Supported)
+            var scan = EnsureScan();
+            if (scan == null) return;
+            string lang = locMgr.Language;
+            if (string.IsNullOrEmpty(lang) ||
+                string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase)) return;
+            EnsureTemplates(scan, lang);
+            Inject(locMgr, scan, lang);
+            RefreshLabels(locMgr); // 이미 그려진 메인메뉴 라벨도 즉시 재로컬라이즈
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] main-menu refresh 실패: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 로드된 모드를 (재)스캔. 첫 SetLanguage 시점에 아직 로드되지 않았던 모드가 있어도
+    /// 로드된 모드 수가 바뀌면 다시 스캔해 이후에 합류시킨다(부분 스캔을 영구 캐시하던 레이스 수정).
+    /// 반환: 지원/미지원 합쳐 1개 이상이면 결과, 아무 모드도 없으면 기존 캐시(없으면 null).
+    /// </summary>
+    private static ScanResult? EnsureScan()
+    {
+        int loaded;
+        try { loaded = ModManager.GetLoadedMods().Count(); }
+        catch { loaded = -1; }
+
+        // 캐시가 있고 로드된 모드 수에 변화가 없으면 재스캔 불필요.
+        if (_scan != null && loaded == _lastLoadedCount) return _scan;
+
+        var scan = ModLocScanner.Scan();
+        if (scan.Supported.Count == 0 && scan.Unsupported.Count == 0)
+            return _scan; // 아직 로드된 모드 없음 — 기존 캐시 유지(없으면 null)
+
+        _scan = scan;
+        _lastLoadedCount = loaded;
+        MainFile.Logger.Info(
+            $"[Sts2ModTranslator] scan: supported={scan.Supported.Count} unsupported={scan.Unsupported.Count}");
+        return _scan;
+    }
+
+    /// <summary>
+    /// 아직 준비되지 않은 (언어, 모드) 조합에 대해서만 원문 추출 + 번역 템플릿 생성.
+    /// 늦게 로드돼 새로 합류한 모드도 빠짐없이 준비된다. 신규 준비가 있으면 리포트도 갱신.
+    /// </summary>
+    private static void EnsureTemplates(ScanResult scan, string language)
+    {
+        bool wrote = false;
+        foreach (var mod in scan.Supported)
+        {
+            string key = language + "\0" + mod.Id;
+            if (!_prepped.Add(key)) continue; // 이미 준비됨
+            try { TranslationStore.EnsureTemplates(mod, language); wrote = true; }
+            catch (Exception ex)
             {
-                try { TranslationStore.EnsureTemplates(mod, language); }
-                catch (Exception ex)
-                {
-                    MainFile.Logger.Warn($"[Sts2ModTranslator] 템플릿 생성 실패 {mod.Id}: {ex.Message}");
-                }
+                _prepped.Remove(key); // 실패 → 다음 호출에서 재시도
+                MainFile.Logger.Warn($"[Sts2ModTranslator] 템플릿 생성 실패 {mod.Id}: {ex.Message}");
             }
+        }
+        if (wrote)
+        {
             TranslationStore.WriteReport(scan, language);
-            _prepedLangs.Add(language);
             MainFile.Logger.Info(
                 $"[Sts2ModTranslator] templates+report ready for '{language}' → {TranslationStore.Root}");
         }
-
-        // 매 호출: 번역 주입.
-        if (!isSource)
-            Inject(locMgr, scan, language);
     }
 
     private static int Inject(LocManager locMgr, ScanResult scan, string language)
