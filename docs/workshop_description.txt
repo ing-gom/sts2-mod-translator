@@ -41,6 +41,15 @@ Turn your work into its own mod — just like other mods reference [b]baselib[/b
 [*]See which packs are installed and [b]how much of each language they cover[/b] (e.g. [i]pack: kor 87%[/i]) in the mod list. To inspect a pack's text, open a mod ▸ [b]Edit[/b] and choose [b]pack: <lang>[/b] in the Reference dropdown.
 [/list]
 
+[h2]Updating a translation mod[/h2]
+When the original mod updates (new cards, relics, or reworded text), keeping your translation in sync is easy:
+[list]
+[*][b]New text is detected automatically[/b] — relaunch with this mod enabled and the translator picks up the original's new keys, adding empty fields for them while keeping every translation you already did.
+[*][b]Translate only the gaps[/b] — open the mod and the language; coverage drops below 100% and the new lines are the empty entries. Your existing work is untouched, and removed lines safely fall back to the original.
+[*][b]Re-install with a bumped version[/b] — press [b]Install as mod[/b] again. When a translation mod is already installed, it shows its current version, the button reads [b]Update installed mod[/b], and the [b]Version[/b] field is pre-filled with the next patch (e.g. [i]1.0.0 → 1.0.1[/i]). Type your own number if you prefer.
+[*][b]Re-upload[/b] — push the refreshed folder to the same Workshop item. Subscribers who also have [b]Mod Translator[/b] get the updated text on their next sync.
+[/list]
+
 [h2]Where the files are[/h2]
 Translations live under the mod's [i]Translations[/i] folder (use [b]Open Folder[/b]). Each mod/language has editable [i]overrides[/i] plus a read-only [i]source[/i] reference of the original text.
 
@@ -55,7 +64,8 @@ Leave a value [b]empty[/b] to keep the original (English) text for that entry.
 [h2]Scope & compatibility[/h2]
 [list]
 [*]Works with mods that ship a standard localization folder — most well-made content mods (e.g. custom characters).
-[*]Mods that hardcode text outside the localization system are listed as [i]unsupported[/i].
+[*]Mods that hardcode text, register it at runtime, or load their own localization outside the game's system are listed as [i]unsupported[/i] — tap the unsupported entry in the mod list to see each mod and the exact reason.
+[*]Even mods that ship no English ([i]eng[/i]) table work, as long as they use the standard localization folder — the richest language they do ship becomes the reference to translate from.
 [*][b]No load-order requirement[/b] — translations are always applied last automatically.
 [/list]
 
