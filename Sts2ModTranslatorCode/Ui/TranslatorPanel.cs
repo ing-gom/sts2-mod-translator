@@ -205,16 +205,19 @@ public static class TranslatorPanel
         foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
         {
             var mod = m;
-            // 설치된 번역 모드가 이 대상을 번역 중이면 표시(런타임에 자동 적용됨).
-            string pack = scan.Bundled.HasTarget(m.Id) ? "   ◆ translation pack installed" : "";
+            // 설치된 번역 모드가 이 대상을 번역 중이면 언어별 커버리지(%)를 표시(런타임 자동 적용).
+            string pack = PackTagForTarget(scan, m.Id);
             var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{pack}");
-            if (!string.IsNullOrEmpty(pack)) b.AddThemeColorOverride("font_color", GOLD);
+            if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
             b.Pressed += () => { _mod = mod; Navigate(View.Languages); };
             ListVBox(list).AddChild(b);
         }
+
+        // 설치된 팩은 위 대상 행의 'pack: 언어 %' 태그로 표시. 내용은 모드 ▸ Edit 의 Reference 에서 본다.
         if (scan.Bundled.Any)
             ListVBox(list).AddChild(Lbl(
-                $"({scan.Bundled.Providers.Count} translation pack(s) installed — applied automatically)", GOLD));
+                $"({scan.Bundled.Providers.Count} translation pack(s) installed — applied automatically. "
+                + "Open a mod ▸ Edit, then pick \"pack: <lang>\" in Reference to view its text.)", GOLD));
         if (scan.Unsupported.Count > 0)
             ListVBox(list).AddChild(Lbl($"({scan.Unsupported.Count} unsupported mods — no localization folder)", GRAY));
 
@@ -265,26 +268,94 @@ public static class TranslatorPanel
             ListVBox(list).AddChild(b);
         }
 
-        // 하단 액션: 이 모드의 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보내기.
+        // 하단 액션: 이 모드의 번역을 배포 가능한 독립 "번역 모드" 로 내보내기 (워크샵 친화).
         var mod = _mod;
+        var box = new VBoxContainer();
+
+        // 1) 번역가(매니페스트 author) 입력 — 세션 간 유지.
+        var authorRow = new HBoxContainer();
+        authorRow.AddChild(Lbl("Author:", GRAY));
+        _authorEdit = new LineEdit
+        {
+            Text = TranslationStore.LoadAuthor(),
+            PlaceholderText = "your name (becomes the mod's author)",
+            CustomMinimumSize = new Vector2(300, 36),
+        };
+        authorRow.AddChild(_authorEdit);
+        box.AddChild(authorRow);
+
+        // 2) 설치 버튼 — 번역을 독립 모드로 게임 mods\ 에 생성(로드·테스트·창작마당 업로드의 입력).
         var footer = new HBoxContainer();
-        var export = ActionButton("Export as mod");
-        export.CustomMinimumSize = new Vector2(180, 40);
-        export.Pressed += () => ExportAsMod(mod);
-        footer.AddChild(export);
-        footer.AddChild(Lbl(
-            "  Package your translations as a standalone mod (depends on this one) to share.", GRAY));
-        _content!.AddChild(footer);
+        var install = ActionButton("Install as mod");
+        install.CustomMinimumSize = new Vector2(190, 40);
+        install.Pressed += () => InstallToGameMods(mod);
+        footer.AddChild(install);
+        box.AddChild(footer);
+
+        box.AddChild(Lbl(
+            "Creates a standalone translation mod in the game's mods folder. Restart to load & test it; "
+            + "then upload it to the Workshop. To share the file directly, zip that folder.", GRAY));
+        _content!.AddChild(box);
     }
 
     // ── 번역 모드 내보내기 ──────────────────────────────────
-    private static void ExportAsMod(SupportedMod mod)
+    private static LineEdit? _authorEdit;
+
+    /// <summary>author 입력칸 값을 읽어 저장하고 반환(다음 내보내기에 재사용).</summary>
+    private static string CurrentAuthor()
     {
-        var (ok, path, err) = TranslationStore.ExportMod(mod);
-        if (!ok) { SetStatus("Export failed: " + err, true, true); return; }
-        SetStatus($"Exported translation mod → {path}", true, false);
+        string a = (_authorEdit?.Text ?? "").Trim();
+        TranslationStore.SaveAuthor(a);
+        return a;
+    }
+
+    // 게임 mods\ 에 바로 내보내 곧장 로드/테스트 + 워크샵 업로드 대시보드가 '설치됨'으로 인식.
+    private static void InstallToGameMods(SupportedMod mod)
+    {
+        string? mods = TranslationStore.GameModsDir;
+        if (string.IsNullOrEmpty(mods))
+        {
+            SetStatus("Could not locate the game's mods folder.", true, true);
+            return;
+        }
+        var (ok, path, err) = TranslationStore.ExportMod(mod, CurrentAuthor(), mods);
+        if (!ok) { SetStatus("Install failed: " + err, true, true); return; }
+        SetStatus($"Installed -> {path}.  Restart the game to load it.", true, false);
         try { OS.ShellShowInFileManager(path); }
-        catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] export open 실패: {ex.Message}"); }
+        catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] install open 실패: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 설치된 팩이 (대상, 언어)에 대해 번역한 키 수와 대상 모드의 전체 번역 가능 키 수.
+    /// total=0 이면 대상의 eng 기준이 없어(런타임 등록 모드 등) % 산정 불가 — 제공 키 수만 의미.
+    /// </summary>
+    private static (int translated, int total) PackCoverage(ScanResult scan, string targetId, string lang)
+    {
+        var byTable = scan.Bundled.ForTargetLang(targetId, lang);
+        var sm = scan.Supported.FirstOrDefault(s => s.Id == targetId);
+        if (byTable == null) return (0, sm?.TotalKeys ?? 0);
+        if (sm == null) return (byTable.Values.Sum(d => d.Count), 0); // eng 기준 없음 — 제공 키만
+        int tr = 0;
+        foreach (var (table, dict) in byTable)
+        {
+            if (!sm.EngByTable.TryGetValue(table, out var eng)) continue;
+            tr += dict.Count(kv => eng.ContainsKey(kv.Key) && !string.IsNullOrEmpty(kv.Value));
+        }
+        return (tr, sm.TotalKeys);
+    }
+
+    /// <summary>"kor 87%" 또는 (기준 없을 때) "kor".</summary>
+    private static string LangPct(ScanResult scan, string targetId, string lang)
+    {
+        var (tr, total) = PackCoverage(scan, targetId, lang);
+        return total > 0 ? $"{lang} {(int)Math.Round(100.0 * tr / total)}%" : lang;
+    }
+
+    /// <summary>한 대상 모드에 설치된 팩의 언어별 커버리지 태그. 없으면 "".</summary>
+    private static string PackTagForTarget(ScanResult scan, string targetId)
+    {
+        var langs = scan.Bundled.LangsForTarget(targetId);
+        return langs.Count == 0 ? "" : "   ◆ pack: " + string.Join(", ", langs.Select(l => LangPct(scan, targetId, l)));
     }
 
     // ── 뷰: 파일(테이블) 목록 ───────────────────────────────
@@ -357,25 +428,42 @@ public static class TranslatorPanel
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
         };
-        // 참조 언어 선택: 모드가 동봉한 언어들(eng 우선). 모드가 대상 언어(예: kor)를
-        // 이미 동봉했다면 그 기존 번역도 여기서 토글해 볼 수 있다.
-        var refLangs = _mod.ByLang.Keys
-            .OrderBy(l => l == "eng" ? "" : l, StringComparer.Ordinal).ToList();
-        if (refLangs.Count == 0) refLangs.Add("eng");
-        int defIdx = refLangs.IndexOf("eng"); if (defIdx < 0) defIdx = 0;
+        // 참조 소스 목록 = ①모드 동봉 언어들(eng 우선) + ②설치된 번역 팩이 이 (대상,테이블)에
+        // 제공하는 언어들("pack: kor"). 팩 항목을 고르면 그 팩의 번역 텍스트를 참조로 본다.
+        string mid = _mod.Id, tbl = _table;
+        var refItems = new System.Collections.Generic.List<(string label, string lang, bool isPack)>();
+        foreach (var l in _mod.ByLang.Keys.OrderBy(l => l == "eng" ? "" : l, StringComparer.Ordinal))
+            refItems.Add((l, l, false));
+        if (refItems.Count == 0) refItems.Add(("eng", "eng", false));
+        var scan = TranslationSync.CurrentScan;
+        if (scan != null)
+            foreach (var pl in scan.Bundled.LangsForTarget(mid))
+                if (scan.Bundled.ForTable(mid, pl, tbl).Count > 0)
+                    refItems.Add(($"pack: {pl}", pl, true));
+
+        int defIdx = refItems.FindIndex(it => !it.isPack && it.lang == "eng");
+        if (defIdx < 0) defIdx = 0;
+
+        string RefText(int i)
+        {
+            var it = refItems[i];
+            return it.isPack && scan != null
+                ? TranslationStore.ToPrettyJson(scan.Bundled.ForTable(mid, it.lang, tbl))
+                : TranslationStore.SourceText(mid, tbl, it.lang);
+        }
 
         var srcHeader = new HBoxContainer();
         srcHeader.AddChild(Lbl("Reference:", GRAY));
         var refOpt = new OptionButton();
         refOpt.AddThemeFontSizeOverride("font_size", 16);
-        for (int i = 0; i < refLangs.Count; i++) refOpt.AddItem(refLangs[i], i);
+        for (int i = 0; i < refItems.Count; i++) refOpt.AddItem(refItems[i].label, i);
         refOpt.Select(defIdx);
         srcHeader.AddChild(refOpt);
         srcCol.AddChild(srcHeader);
 
         var srcEdit = new CodeEdit
         {
-            Text = TranslationStore.SourceText(_mod.Id, _table, refLangs[defIdx]),
+            Text = RefText(defIdx),
             Editable = false,
             WrapMode = TextEdit.LineWrappingMode.Boundary,
             GuttersDrawLineNumbers = true,
@@ -385,11 +473,9 @@ public static class TranslatorPanel
         srcCol.AddChild(srcEdit);
         panes.AddChild(srcCol);
 
-        string mid = _mod.Id, tbl = _table;
         refOpt.ItemSelected += (long idx) =>
         {
-            if (idx >= 0 && idx < refLangs.Count)
-                srcEdit.Text = TranslationStore.SourceText(mid, tbl, refLangs[(int)idx]);
+            if (idx >= 0 && idx < refItems.Count) srcEdit.Text = RefText((int)idx);
         };
 
         var ovCol = new VBoxContainer

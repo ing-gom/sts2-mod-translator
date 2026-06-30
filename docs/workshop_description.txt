@@ -17,7 +17,7 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 [h2]In-game editor[/h2]
 [list]
 [*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right
-[*][b]Reference language toggle[/b] — if a mod already ships other languages, switch the left pane between them (e.g. compare against the existing Chinese/English)
+[*][b]Reference dropdown[/b] — switch the left pane between any language the mod ships (e.g. compare against the existing Chinese/English), or pick [b]pack: <lang>[/b] to read an installed translation pack's text while you work
 [*][b]Line numbers[/b] for easy navigation, with JSON validation on save
 [*][b]Upload[/b] a translation file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow
 [/list]
@@ -33,10 +33,12 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 [h2]Share translations as a standalone mod[/h2]
 Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Other players install your translation mod (plus this one) and the text applies automatically, with no editing.
 [list]
-[*]Pick a mod, then press [b]Export as mod[/b] — it writes a ready-to-ship mod folder (manifest + your translations for every language) to [i]%APPDATA%\Sts2ModTranslator\exported[/i].
-[*]Drop that folder into [i]<STS2>/mods/[/i] or upload it to the Workshop to share.
-[*]No DLL or coding needed — a translation mod is pure data plus a manifest that declares [b]dependencies: ["Sts2ModTranslator"][/b].
+[*]Enter your name in [b]Author[/b], pick a mod, then press [b]Install as mod[/b] — it creates a ready-to-ship translation mod directly in your local [i]<STS2>/mods/[/i] folder (named [i]<ModName>_Translation[/i], with the manifest plus your translations for every language you worked on).
+[*][b]Recognized by the Steam Workshop[/b] — because it's a normal mod sitting in your local mods folder, you can publish it to the Workshop exactly like any other mod. Subscribers who also have [b]Mod Translator[/b] get your text automatically.
+[*]Restart the game to load and test it first. To hand the file to someone directly instead, just zip that folder.
+[*]No DLL or coding needed — a translation mod is pure data plus a manifest that declares this one as a dependency (the required [b]Mod Translator[/b] version is filled in for you).
 [*]Installed translation packs are detected at boot and applied last, so your own in-editor edits still win over a pack, and a pack wins over the original text.
+[*]See which packs are installed and [b]how much of each language they cover[/b] (e.g. [i]pack: kor 87%[/i]) in the mod list. To inspect a pack's text, open a mod ▸ [b]Edit[/b] and choose [b]pack: <lang>[/b] in the Reference dropdown.
 [/list]
 
 [h2]Where the files are[/h2]

@@ -67,7 +67,7 @@ public static class ModLocScanner
 
             // 이 모드가 "번역 모드"(translations/ 동봉)인지 먼저 본다. 번역 JSON 을 모아 두고,
             // localization/ 이 없더라도 미지원으로 분류하지 않는다(번역 모드는 원래 localization 이 없음).
-            bool isProvider = BundledTranslationScanner.TryRead(id, name, result.Bundled);
+            bool isProvider = BundledTranslationScanner.TryRead(id, name, mod.path, result.Bundled);
 
             string locRoot = $"res://{id}/localization";
             if (!Godot.DirAccess.DirExistsAbsolute(locRoot))

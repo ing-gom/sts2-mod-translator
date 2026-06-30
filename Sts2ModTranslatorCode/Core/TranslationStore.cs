@@ -30,8 +30,9 @@ public static class TranslationStore
     public const string DataExt = ".txt";
 
     /// <summary>
-    /// 번역 데이터 루트. 1순위 = 모드 폴더 내부의 Translations\ (DLL 옆),
-    /// 쓰기 불가(예: Program Files 권한) 시 2순위 = %APPDATA%\Sts2ModTranslator\.
+    /// 번역 데이터 루트 = 모드 폴더 내부의 Translations\ (DLL 옆). %APPDATA% 폴백은 쓰지 않는다
+    /// (루트 이중화로 번역이 갈라지던 문제 제거). 기존 %APPDATA% 데이터는 최초 1회 여기로 병합 이전한다.
+    /// 게임 폴더가 쓰기 불가(예: Program Files 권한)면 경고만 남기고 동작은 best-effort.
     /// </summary>
     public static string Root
     {
@@ -39,32 +40,142 @@ public static class TranslationStore
         {
             if (_rootCache != null) return _rootCache;
 
-            // 모드 자신의 폴더 = 이 DLL 이 있는 디렉터리 (SkinManager 와 동일 패턴).
-            string? modDir = null;
-            try
+            string? modDir = OwnModDir();
+            if (string.IsNullOrEmpty(modDir))
             {
-                string loc = typeof(TranslationStore).Assembly.Location;
-                if (!string.IsNullOrEmpty(loc)) modDir = Path.GetDirectoryName(loc);
+                // 정상 환경에선 도달하지 않음(어셈블리 위치/Mod.path 모두 실패). 마지막 수단(비-%APPDATA%).
+                MainFile.Logger.Warn("[Sts2ModTranslator] 모드 폴더 위치를 확인할 수 없습니다 — 번역 저장이 제한될 수 있습니다.");
+                modDir = AppContext.BaseDirectory;
             }
-            catch { /* Location 비어있는 로드 컨텍스트 → 폴백 */ }
 
-            string chosen;
-            string inMod = modDir != null ? Path.Combine(modDir, "Translations") : "";
-            if (!string.IsNullOrEmpty(inMod) && TryEnsureWritable(inMod))
-            {
-                chosen = inMod;
-            }
-            else
-            {
-                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                chosen = Path.Combine(appData, "Sts2ModTranslator");
-                Directory.CreateDirectory(chosen);
-            }
+            string chosen = Path.Combine(modDir!, "Translations");
+            Directory.CreateDirectory(chosen);
+            if (!TryEnsureWritable(chosen))
+                MainFile.Logger.Warn(
+                    $"[Sts2ModTranslator] '{chosen}' 에 쓸 수 없습니다(게임 폴더 권한). 번역이 저장되지 않을 수 있습니다.");
 
             _rootCache = chosen;
+            MigrateFromAppData(chosen);     // 기존 %APPDATA% 작업 데이터 → 모드 폴더로 1회 병합 이전
             MigrateLegacyExtension(chosen); // 기존 .json 작업 파일 → .txt 1회 변환
             return chosen;
         }
+    }
+
+    /// <summary>이 모드 자신의 폴더(DLL/매니페스트 위치). 어셈블리 위치 → 실패 시 ModManager 의 Mod.path.</summary>
+    private static string? OwnModDir()
+    {
+        try
+        {
+            string loc = typeof(TranslationStore).Assembly.Location;
+            if (!string.IsNullOrEmpty(loc)) return Path.GetDirectoryName(loc);
+        }
+        catch { /* Location 비어있는 로드 컨텍스트 → 아래 폴백 */ }
+        try
+        {
+            foreach (var m in MegaCrit.Sts2.Core.Modding.ModManager.GetLoadedMods())
+                if (m.manifest?.id == MainFile.ModId && !string.IsNullOrEmpty(m.path))
+                    return m.path;
+        }
+        catch { /* 모드 로드 전 등 — null */ }
+        return null;
+    }
+
+    /// <summary>
+    /// 이전 버전이 쓰던 %APPDATA%\Sts2ModTranslator\ 의 작업 데이터(overrides/source/author)를
+    /// 모드 폴더 루트로 최초 1회 병합 이전한다. 키 단위로 비어 있지 않은 값을 보존(번역 유실 방지):
+    /// 현재 모드 폴더 값이 비어 있고 %APPDATA% 에 값이 있으면 그 값을 채운다. exported\ 는 제외(스테이징).
+    /// %APPDATA% 원본은 삭제하지 않는다(안전). best-effort.
+    /// </summary>
+    private static void MigrateFromAppData(string root)
+    {
+        try
+        {
+            string appData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sts2ModTranslator");
+            if (!Directory.Exists(appData)) return;
+            if (string.Equals(Path.GetFullPath(appData).TrimEnd('\\'),
+                              Path.GetFullPath(root).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                return; // 동일 경로(있을 수 없지만 방어)
+
+            int moved = 0;
+            foreach (var sub in new[] { "overrides", "source" })
+            {
+                string srcRoot = Path.Combine(appData, sub);
+                if (!Directory.Exists(srcRoot)) continue;
+                foreach (var srcFile in Directory.GetFiles(srcRoot, "*", SearchOption.AllDirectories))
+                {
+                    if (!srcFile.EndsWith(DataExt, StringComparison.Ordinal) &&
+                        !srcFile.EndsWith(".json", StringComparison.Ordinal)) continue;
+                    string rel = Path.GetRelativePath(srcRoot, srcFile);
+                    // 레거시 .json → .txt 로 목적지 확장자 정규화.
+                    if (rel.EndsWith(".json", StringComparison.Ordinal))
+                        rel = rel.Substring(0, rel.Length - ".json".Length) + DataExt;
+                    string dstFile = Path.Combine(root, sub, rel);
+                    if (MergePreferNonEmpty(srcFile, dstFile)) moved++;
+                }
+            }
+            // author 이름.
+            foreach (var ext in new[] { DataExt, ".json" })
+            {
+                string aSrc = Path.Combine(appData, "author" + ext);
+                string aDst = Path.Combine(root, "author" + DataExt);
+                if (File.Exists(aSrc) && !File.Exists(aDst))
+                {
+                    Directory.CreateDirectory(root);
+                    File.Copy(aSrc, aDst);
+                }
+            }
+            if (moved > 0)
+                MainFile.Logger.Info($"[Sts2ModTranslator] %APPDATA% 번역 데이터 {moved}개 파일을 모드 폴더로 이전.");
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] %APPDATA% 이전 실패(무시): {ex.Message}");
+        }
+    }
+
+    /// <summary>src 의 (키→값)을 dst 로 병합. dst 값이 비어 있고 src 값이 있으면 채운다. 변경 시 true.</summary>
+    private static bool MergePreferNonEmpty(string srcFile, string dstFile)
+    {
+        try
+        {
+            var src = ReadJsonRaw(srcFile);
+            if (src.Count == 0) return false;
+            if (!File.Exists(dstFile))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(dstFile)!);
+                var sorted = new SortedDictionary<string, string>(src, StringComparer.Ordinal);
+                WriteJson(dstFile, sorted);
+                return true;
+            }
+            var dst = ReadJsonRaw(dstFile);
+            bool changed = false;
+            var merged = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var k in dst.Keys.Union(src.Keys))
+            {
+                string dv = dst.TryGetValue(k, out var a) ? a : "";
+                string sv = src.TryGetValue(k, out var b) ? b : "";
+                string val = !string.IsNullOrEmpty(dv) ? dv : sv;
+                merged[k] = val;
+                if (val != dv) changed = true;
+            }
+            if (changed) WriteJson(dstFile, merged);
+            return changed;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>임의 경로의 flat {string:string} JSON 을 읽는다(병합 이전 전용). 실패 시 빈 dict.</summary>
+    private static Dictionary<string, string> ReadJsonRaw(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return new();
+            string text = File.ReadAllText(path, Encoding.UTF8);
+            if (string.IsNullOrWhiteSpace(text)) return new();
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(text) ?? new();
+        }
+        catch { return new(); }
     }
 
     /// <summary>
@@ -237,6 +348,14 @@ public static class TranslationStore
         catch { return "{}"; }
     }
 
+    /// <summary>(키→값) dict 를 편집기 참조용 들여쓰기 JSON 문자열로. 키 정렬·비ASCII 그대로.</summary>
+    public static string ToPrettyJson(IReadOnlyDictionary<string, string> dict)
+    {
+        var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in dict) sorted[kv.Key] = kv.Value;
+        return JsonSerializer.Serialize(sorted, WriteOpts);
+    }
+
     /// <summary>원본(기본 eng) 로컬라이제이션 텍스트(편집기 참조용 read-only). 없으면 "{}".</summary>
     public static string SourceText(string modId, string table, string lang = "eng")
     {
@@ -317,32 +436,53 @@ public static class TranslationStore
         return byTable;
     }
 
-    // ── 번역 모드 내보내기 ──────────────────────────────────────
+    // ── 번역 모드 내보내기(설치) ────────────────────────────────
 
     /// <summary>
-    /// 내보낸 번역 모드들이 모이는 폴더. 항상 %APPDATA%\Sts2ModTranslator\exported 를 쓴다
-    /// (Root 가 모드 폴더 내부일 수 있는데, 그 안에 또 다른 모드 매니페스트를 두면 게임이
-    /// 중첩 모드로 오인할 수 있으므로 의도적으로 모드 폴더 밖으로 내보낸다).
+    /// 게임의 mods\ 폴더 = 이 모드 자신의 폴더의 상위. 여기로 내보내면 곧바로 설치본이 되어
+    /// 다음 부팅에 로드되고, 워크샵 업로드 대시보드도 '설치됨(installed)'으로 인식한다.
+    /// 위치를 못 구하면 null.
     /// </summary>
-    public static string ExportRoot
+    public static string? GameModsDir
     {
         get
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            return Path.Combine(appData, "Sts2ModTranslator", "exported");
+            string? modDir = OwnModDir();
+            return string.IsNullOrEmpty(modDir) ? null : Path.GetDirectoryName(modDir); // mods\
         }
+    }
+
+    /// <summary>매니페스트 author 로 쓸 번역가 이름(세션 간 유지). 비어 있으면 "".</summary>
+    public static string LoadAuthor()
+    {
+        try
+        {
+            string p = ReadPath(Path.Combine(Root, "author" + DataExt));
+            return File.Exists(p) ? File.ReadAllText(p).Trim() : "";
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>번역가 이름을 저장(다음 내보내기에 author 로 자동 사용).</summary>
+    public static void SaveAuthor(string author)
+    {
+        try { WriteRaw(Path.Combine(Root, "author" + DataExt), (author ?? "").Trim()); }
+        catch { /* best-effort */ }
     }
 
     /// <summary>
     /// 한 대상 모드의 (비어 있지 않은) 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보낸다.
     /// 결과 레이아웃:
-    ///   exported/{modId}_Translation/
+    ///   {destRoot}/{modId}_Translation/
     ///     {modId}_Translation.json                      — 매니페스트(dependencies: [Sts2ModTranslator])
     ///     translations/{대상id}/{lang}/{table}.txt      — 번역값(JSON 내용, 비어 있지 않은 키만)
     /// 사용자는 이 폴더를 STS2 mods\ 에 넣거나 Workshop 에 올려 배포할 수 있다.
+    /// destRoot 가 null 이면 ExportRoot(%APPDATA%\...\exported), 게임 mods\ 를 주면 즉시 설치본이 된다.
+    /// author 는 매니페스트 author(번역가 본인). 썸네일(image.png)은 창작마당 업로드 시 사용자가 직접 등록.
     /// 반환: (성공여부, 생성된 폴더 경로, 오류). 내보낼 번역이 하나도 없으면 실패.
     /// </summary>
-    public static (bool ok, string path, string error) ExportMod(SupportedMod mod, string author = "")
+    public static (bool ok, string path, string error) ExportMod(
+        SupportedMod mod, string author, string destRoot)
     {
         try
         {
@@ -357,7 +497,7 @@ public static class TranslationStore
                 return (false, "", "내보낼 번역이 없습니다 — 먼저 한 항목 이상 번역하세요.");
 
             string newId = Sanitize(mod.Id) + "_Translation";
-            string modDir = Path.Combine(ExportRoot, newId);
+            string modDir = Path.Combine(destRoot, newId);
             // 기존 내보내기는 새로 덮어쓴다(매번 최신 번역 반영). translations 하위만 청소.
             string trDir = Path.Combine(modDir, BundledTranslationScanner.FolderName, mod.Id);
             if (Directory.Exists(trDir)) Directory.Delete(trDir, recursive: true);
@@ -380,14 +520,17 @@ public static class TranslationStore
             {
                 id = newId,
                 name = mod.Name + " Translation",
-                author,
+                author = author ?? "",
                 description =
                     $"Translation pack for \"{mod.Name}\" ({string.Join(", ", langCodes)}). "
                     + "Requires the STS2 Mod Translator mod to apply.",
                 version = "1.0.0",
                 has_pck = false,
                 has_dll = false,
-                dependencies = new[] { MainFile.ModId },
+                // STS2 v0.107+ 매니페스트: dependencies 는 {id, min_version} 객체 배열.
+                // (옛 문자열 배열은 부팅 시 'old-style dependencies … will be removed' 경고를 띄움.)
+                // min_version = 번역팩 소비 기능(BundledTranslationScanner)이 들어온 1.3.0.
+                dependencies = new[] { new { id = MainFile.ModId, min_version = "1.3.0" } },
                 affects_gameplay = false,
             };
             WriteRaw(Path.Combine(modDir, newId + ".json"),
