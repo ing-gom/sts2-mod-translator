@@ -481,8 +481,50 @@ public static class TranslationStore
     /// author 는 매니페스트 author(번역가 본인). 썸네일(image.png)은 창작마당 업로드 시 사용자가 직접 등록.
     /// 반환: (성공여부, 생성된 폴더 경로, 오류). 내보낼 번역이 하나도 없으면 실패.
     /// </summary>
+    /// <summary>내보내기 시 생성되는 번역 모드의 폴더/매니페스트 id ("{원본id}_Translation").</summary>
+    public static string ExportedModId(SupportedMod mod) => Sanitize(mod.Id) + "_Translation";
+
+    /// <summary>
+    /// destRoot(보통 게임 mods\)에 이미 설치된 이 번역 모드의 매니페스트 version. 설치 안 됐거나
+    /// 읽기 실패면 null. UI 가 "설치됨: vX" 표기 + patch 자동 증가 제안에 쓴다.
+    /// </summary>
+    public static string? InstalledVersion(SupportedMod mod, string destRoot)
+    {
+        try
+        {
+            string id = ExportedModId(mod);
+            string manifestPath = Path.Combine(destRoot, id, id + ".json");
+            if (!File.Exists(manifestPath)) return null;
+            var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                File.ReadAllText(manifestPath, Encoding.UTF8));
+            if (doc != null && doc.TryGetValue("version", out var v) && v.ValueKind == JsonValueKind.String)
+            {
+                string s = (v.GetString() ?? "").Trim();
+                return string.IsNullOrEmpty(s) ? null : s;
+            }
+        }
+        catch { /* 읽기 실패 — 미설치로 취급 */ }
+        return null;
+    }
+
+    /// <summary>
+    /// 설치 버전의 다음 제안값. 마지막 숫자 세그먼트를 1 올린다("1.0.0"→"1.0.1", "v1.2"→"1.3").
+    /// installed 가 비어 있으면(미설치) "1.0.0". 숫자로 못 끝나면 그대로 둔다(사용자가 직접 수정).
+    /// </summary>
+    public static string NextVersion(string? installed)
+    {
+        if (string.IsNullOrWhiteSpace(installed)) return "1.0.0";
+        var parts = installed.Trim().TrimStart('v', 'V').Split('.');
+        if (parts.Length > 0 && int.TryParse(parts[^1], out int last))
+        {
+            parts[^1] = (last + 1).ToString();
+            return string.Join('.', parts);
+        }
+        return installed.Trim();
+    }
+
     public static (bool ok, string path, string error) ExportMod(
-        SupportedMod mod, string author, string destRoot)
+        SupportedMod mod, string author, string destRoot, string version)
     {
         try
         {
@@ -496,6 +538,7 @@ public static class TranslationStore
             if (langs.Count == 0)
                 return (false, "", "내보낼 번역이 없습니다 — 먼저 한 항목 이상 번역하세요.");
 
+            string ver = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version.Trim();
             string newId = Sanitize(mod.Id) + "_Translation";
             string modDir = Path.Combine(destRoot, newId);
             // 기존 내보내기는 새로 덮어쓴다(매번 최신 번역 반영). translations 하위만 청소.
@@ -524,7 +567,7 @@ public static class TranslationStore
                 description =
                     $"Translation pack for \"{mod.Name}\" ({string.Join(", ", langCodes)}). "
                     + "Requires the STS2 Mod Translator mod to apply.",
-                version = "1.0.0",
+                version = ver,
                 has_pck = false,
                 has_dll = false,
                 // STS2 v0.107+ 매니페스트: dependencies 는 {id, min_version} 객체 배열.

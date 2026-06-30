@@ -18,9 +18,15 @@ public sealed class SupportedMod
     /// <summary>모드가 동봉한 모든 언어: lang → 테이블명 → (loc key → 텍스트).</summary>
     public Dictionary<string, Dictionary<string, Dictionary<string, string>>> ByLang = new();
 
-    /// <summary>eng(기준 언어) 테이블. 키 집합/템플릿의 단일 출처.</summary>
+    /// <summary>
+    /// 원문(기준) 언어. 보통 eng 지만, eng 를 동봉하지 않은 모드는 동봉 언어 중 가장 키가 많은
+    /// 언어를 원문으로 잡는다(<see cref="ModLocScanner.Scan"/>). 키 집합/템플릿/참조의 단일 출처.
+    /// </summary>
+    public string SourceLang = "eng";
+
+    /// <summary>원문(<see cref="SourceLang"/>) 테이블. 키 집합/템플릿의 단일 출처.</summary>
     public Dictionary<string, Dictionary<string, string>> EngByTable =>
-        ByLang.TryGetValue("eng", out var d) ? d : new();
+        ByLang.TryGetValue(SourceLang, out var d) ? d : new();
 
     public int TotalKeys => EngByTable.Values.Sum(d => d.Count);
 }
@@ -47,11 +53,12 @@ public sealed class ScanResult
 
 /// <summary>
 /// 로드된 모드를 게임의 로크 경로 규약(res://{id}/localization/{lang}/{file})으로 스캔.
-/// localization 폴더 + eng 테이블을 동봉한 모드만 "지원" 으로 분류한다.
+/// localization 폴더 + 읽을 수 있는 언어 테이블이 하나라도 있는 모드를 "지원" 으로 분류한다.
+/// 원문 기준 언어는 eng 우선, eng 가 없으면 가장 키가 많은 동봉 언어로 폴백한다.
 /// </summary>
 public static class ModLocScanner
 {
-    private const string SourceLang = "eng"; // 원문 기준 언어 (모든 모드가 eng 를 베이스로 동봉)
+    private const string PreferredSourceLang = "eng"; // 원문 우선 언어 (대부분 모드가 eng 베이스)
 
     public static ScanResult Scan()
     {
@@ -76,7 +83,7 @@ public static class ModLocScanner
                 result.Unsupported.Add(new UnsupportedMod
                 {
                     Id = id, Name = name,
-                    Reason = "no localization/ folder (uses runtime-merge or hardcoded text)"
+                    Reason = "no localization/ folder — hardcoded, runtime-registered, or cosmetic (no translatable text)"
                 });
                 continue;
             }
@@ -98,15 +105,28 @@ public static class ModLocScanner
                 if (tables.Count > 0) sm.ByLang[lang] = tables;
             }
 
-            if (!sm.ByLang.ContainsKey(SourceLang) || sm.EngByTable.Count == 0)
+            if (sm.ByLang.Count == 0)
             {
+                // localization/ 은 있으나 표준 {lang}/{table}.json 하위구조가 없다.
+                // 평면 localization/*.json (예: en.json) 은 모드가 자체 i18n 으로 직접 읽는 패턴 —
+                // 게임 LocManager 를 거치지 않아 주입 불가(디컴파일로 확인된 ModConfig 케이스).
+                bool flatFiles = SafeFiles(locRoot).Any(f => f.EndsWith(".json"));
                 result.Unsupported.Add(new UnsupportedMod
                 {
                     Id = id, Name = name,
-                    Reason = $"localization/ present but no readable '{SourceLang}' source tables"
+                    Reason = flatFiles
+                        ? "self-loaded localization (flat localization/*.json) — bypasses the game's LocManager, not injectable"
+                        : "localization/ present but no readable {lang}/{table}.json tables"
                 });
                 continue;
             }
+
+            // 원문 기준 언어: eng 우선, eng 가 없으면 가장 키가 많은 동봉 언어로 폴백.
+            sm.SourceLang = sm.ByLang.ContainsKey(PreferredSourceLang)
+                ? PreferredSourceLang
+                : sm.ByLang.OrderByDescending(kv => kv.Value.Values.Sum(d => d.Count))
+                           .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                           .First().Key;
 
             result.Supported.Add(sm);
         }

@@ -21,7 +21,7 @@ public static class TranslatorPanel
     private static readonly Color GRAY = new(0.60f, 0.63f, 0.72f);
     private static readonly Color RED = new(0.92f, 0.45f, 0.45f);
 
-    private enum View { Mods, Languages, Files, Editor }
+    private enum View { Mods, Languages, Files, Editor, Unsupported }
 
     private static Control? _root;
     private static Label? _title;
@@ -165,6 +165,7 @@ public static class TranslatorPanel
                 View.Languages => _mod?.Name ?? "",
                 View.Files => $"{_mod?.Name}  /  {_lang}",
                 View.Editor => $"{_mod?.Name}  /  {_lang}  /  {_table}.json",
+                View.Unsupported => "Unsupported mods",
                 _ => "STS2 Mod Translator",
             };
         RebuildContent();
@@ -177,6 +178,7 @@ public static class TranslatorPanel
             case View.Languages: Navigate(View.Mods); break;
             case View.Files: Navigate(View.Languages); break;
             case View.Editor: Navigate(View.Files); break;
+            case View.Unsupported: Navigate(View.Mods); break;
         }
     }
 
@@ -192,6 +194,7 @@ public static class TranslatorPanel
             case View.Languages: BuildLanguages(); break;
             case View.Files: BuildFiles(); break;
             case View.Editor: BuildEditor(); break;
+            case View.Unsupported: BuildUnsupported(); break;
         }
     }
 
@@ -219,7 +222,12 @@ public static class TranslatorPanel
                 $"({scan.Bundled.Providers.Count} translation pack(s) installed — applied automatically. "
                 + "Open a mod ▸ Edit, then pick \"pack: <lang>\" in Reference to view its text.)", GOLD));
         if (scan.Unsupported.Count > 0)
-            ListVBox(list).AddChild(Lbl($"({scan.Unsupported.Count} unsupported mods — no localization folder)", GRAY));
+        {
+            var ub = RowButton($"▸ {scan.Unsupported.Count} unsupported mods — tap to see which & why");
+            ub.AddThemeColorOverride("font_color", GRAY);
+            ub.Pressed += () => Navigate(View.Unsupported);
+            ListVBox(list).AddChild(ub);
+        }
 
         // 하단 액션
         var footer = new HBoxContainer();
@@ -229,17 +237,47 @@ public static class TranslatorPanel
         _content!.AddChild(footer);
     }
 
+    // ── 뷰: 미지원 모드 목록 ─────────────────────────────────
+    private static void BuildUnsupported()
+    {
+        var scan = TranslationSync.CurrentScan;
+        if (scan == null || scan.Unsupported.Count == 0)
+        {
+            _content!.AddChild(Lbl("No unsupported mods.", GRAY));
+            return;
+        }
+
+        _content!.AddChild(Lbl(
+            "These installed mods can't be translated here because they ship no readable "
+            + "localization tables (runtime-merged or hardcoded text).", GRAY));
+
+        var list = ScrollList();
+        foreach (var u in scan.Unsupported.OrderBy(u => u.Id, StringComparer.Ordinal))
+        {
+            var row = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+            var name = new Label { Text = u.Name.Length > 0 && u.Name != u.Id ? $"{u.Name}  ({u.Id})" : u.Id };
+            name.AddThemeFontSizeOverride("font_size", 18);
+            name.AddThemeColorOverride("font_color", WHITE);
+            row.AddChild(name);
+            var reason = new Label { Text = "    " + u.Reason };
+            reason.AddThemeFontSizeOverride("font_size", 15);
+            reason.AddThemeColorOverride("font_color", GRAY);
+            row.AddChild(reason);
+            ListVBox(list).AddChild(row);
+        }
+    }
+
     // ── 뷰: 언어 목록 ───────────────────────────────────────
     private static void BuildLanguages()
     {
         if (_mod == null) { Navigate(View.Mods); return; }
 
         string cur = TranslationSync.CurrentLanguage();
-        // 게임 전체 지원 언어 ∪ 모드 동봉 언어. eng 는 원문(번역 대상 아님)이라 제외.
+        // 게임 전체 지원 언어 ∪ 모드 동봉 언어. 원문 언어는 번역 대상 아님이라 제외.
         // 현재 설정 언어를 맨 위(기본 선택)로, 나머지는 게임 선언 순서를 유지(OrderBy 안정 정렬).
         var langs = TranslationSync.SupportedLanguages()
             .Concat(_mod.ShipsLangs)
-            .Where(l => !string.Equals(l, "eng", StringComparison.OrdinalIgnoreCase))
+            .Where(l => !string.Equals(l, _mod.SourceLang, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => string.Equals(l, cur, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ToList();
@@ -284,22 +322,42 @@ public static class TranslatorPanel
         authorRow.AddChild(_authorEdit);
         box.AddChild(authorRow);
 
-        // 2) 설치 버튼 — 번역을 독립 모드로 게임 mods\ 에 생성(로드·테스트·창작마당 업로드의 입력).
+        // 2) 버전 입력 — 이미 설치돼 있으면 현재 버전을 표기하고 patch 한 칸 올린 값을 기본 제안.
+        string? modsDir = TranslationStore.GameModsDir;
+        string? installedVer = modsDir == null ? null : TranslationStore.InstalledVersion(mod, modsDir);
+        var versionRow = new HBoxContainer();
+        versionRow.AddChild(Lbl("Version:", GRAY));
+        _versionEdit = new LineEdit
+        {
+            Text = TranslationStore.NextVersion(installedVer),
+            PlaceholderText = "1.0.0",
+            CustomMinimumSize = new Vector2(140, 36),
+        };
+        versionRow.AddChild(_versionEdit);
+        if (installedVer != null)
+            versionRow.AddChild(Lbl($"installed: v{installedVer}", GOLD));
+        box.AddChild(versionRow);
+
+        // 3) 설치/업데이트 버튼 — 번역을 독립 모드로 게임 mods\ 에 생성(로드·테스트·창작마당 업로드의 입력).
         var footer = new HBoxContainer();
-        var install = ActionButton("Install as mod");
-        install.CustomMinimumSize = new Vector2(190, 40);
+        var install = ActionButton(installedVer != null ? "Update installed mod" : "Install as mod");
+        install.CustomMinimumSize = new Vector2(200, 40);
         install.Pressed += () => InstallToGameMods(mod);
         footer.AddChild(install);
         box.AddChild(footer);
 
         box.AddChild(Lbl(
-            "Creates a standalone translation mod in the game's mods folder. Restart to load & test it; "
-            + "then upload it to the Workshop. To share the file directly, zip that folder.", GRAY));
+            installedVer != null
+                ? $"Already installed (v{installedVer}). Updating overwrites it with the new version above; "
+                  + "restart to load & test it, then re-upload to the Workshop."
+                : "Creates a standalone translation mod in the game's mods folder. Restart to load & test it; "
+                  + "then upload it to the Workshop. To share the file directly, zip that folder.", GRAY));
         _content!.AddChild(box);
     }
 
     // ── 번역 모드 내보내기 ──────────────────────────────────
     private static LineEdit? _authorEdit;
+    private static LineEdit? _versionEdit;
 
     /// <summary>author 입력칸 값을 읽어 저장하고 반환(다음 내보내기에 재사용).</summary>
     private static string CurrentAuthor()
@@ -308,6 +366,9 @@ public static class TranslatorPanel
         TranslationStore.SaveAuthor(a);
         return a;
     }
+
+    /// <summary>version 입력칸 값(비어 있으면 ExportMod 가 "1.0.0" 으로 폴백).</summary>
+    private static string CurrentVersion() => (_versionEdit?.Text ?? "").Trim();
 
     // 게임 mods\ 에 바로 내보내 곧장 로드/테스트 + 워크샵 업로드 대시보드가 '설치됨'으로 인식.
     private static void InstallToGameMods(SupportedMod mod)
@@ -318,9 +379,11 @@ public static class TranslatorPanel
             SetStatus("Could not locate the game's mods folder.", true, true);
             return;
         }
-        var (ok, path, err) = TranslationStore.ExportMod(mod, CurrentAuthor(), mods);
+        var (ok, path, err) = TranslationStore.ExportMod(mod, CurrentAuthor(), mods, CurrentVersion());
         if (!ok) { SetStatus("Install failed: " + err, true, true); return; }
-        SetStatus($"Installed -> {path}.  Restart the game to load it.", true, false);
+        string ver = CurrentVersion();
+        SetStatus($"Installed v{(ver.Length == 0 ? "1.0.0" : ver)} -> {path}.  Restart the game to load it.",
+            true, false);
         try { OS.ShellShowInFileManager(path); }
         catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] install open 실패: {ex.Message}"); }
     }
@@ -432,16 +495,16 @@ public static class TranslatorPanel
         // 제공하는 언어들("pack: kor"). 팩 항목을 고르면 그 팩의 번역 텍스트를 참조로 본다.
         string mid = _mod.Id, tbl = _table;
         var refItems = new System.Collections.Generic.List<(string label, string lang, bool isPack)>();
-        foreach (var l in _mod.ByLang.Keys.OrderBy(l => l == "eng" ? "" : l, StringComparer.Ordinal))
+        foreach (var l in _mod.ByLang.Keys.OrderBy(l => l == _mod.SourceLang ? "" : l, StringComparer.Ordinal))
             refItems.Add((l, l, false));
-        if (refItems.Count == 0) refItems.Add(("eng", "eng", false));
+        if (refItems.Count == 0) refItems.Add((_mod.SourceLang, _mod.SourceLang, false));
         var scan = TranslationSync.CurrentScan;
         if (scan != null)
             foreach (var pl in scan.Bundled.LangsForTarget(mid))
                 if (scan.Bundled.ForTable(mid, pl, tbl).Count > 0)
                     refItems.Add(($"pack: {pl}", pl, true));
 
-        int defIdx = refItems.FindIndex(it => !it.isPack && it.lang == "eng");
+        int defIdx = refItems.FindIndex(it => !it.isPack && it.lang == _mod.SourceLang);
         if (defIdx < 0) defIdx = 0;
 
         string RefText(int i)
