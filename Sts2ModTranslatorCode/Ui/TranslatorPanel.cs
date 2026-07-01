@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
@@ -233,7 +234,11 @@ public static class TranslatorPanel
         var footer = new HBoxContainer();
         var of = ActionButton("Open Folder"); of.Pressed += OpenFolder;
         var rl = ActionButton("Reload"); rl.Pressed += () => { int n = TranslationSync.ReloadFromDisk(); SetStatus($"Reloaded {n} keys.", true, false); };
-        footer.AddChild(of); footer.AddChild(rl);
+        var dk = ActionButton(TranslationStore.LoadApiKey().Length > 0 ? "DeepL key ✓" : "DeepL key…");
+        dk.CustomMinimumSize = new Vector2(150, 40);
+        dk.TooltipText = "Set the DeepL API key used by the editor's Auto-fill button.";
+        dk.Pressed += () => PromptApiKey(() => { if (_view == View.Mods) RebuildContent(); });
+        footer.AddChild(of); footer.AddChild(rl); footer.AddChild(dk);
         _content!.AddChild(footer);
     }
 
@@ -458,6 +463,14 @@ public static class TranslatorPanel
 
         var footer = new HBoxContainer();
         var mod = _mod; string lang = _lang;
+        var autoAll = ActionButton("Auto-fill all ✨");
+        autoAll.CustomMinimumSize = new Vector2(180, 40);
+        bool hasKeyF = TranslationStore.LoadApiKey().Length > 0;
+        autoAll.Disabled = !hasKeyF;
+        autoAll.TooltipText = hasKeyF
+            ? "Machine-translate every empty entry across all files with DeepL, then save."
+            : "Set your DeepL API key first — use the \"DeepL key…\" button on the mods list.";
+        autoAll.Pressed += () => OnAutoFillAll(autoAll);
         var resetAll = ActionButton("Reset all files");
         resetAll.Pressed += () => Confirm(
             "Reset all files",
@@ -470,7 +483,7 @@ public static class TranslatorPanel
                 SetStatus($"Reset all files for {lang}.", true, false);
                 RebuildContent();
             });
-        footer.AddChild(resetAll);
+        footer.AddChild(autoAll); footer.AddChild(resetAll);
         _content!.AddChild(footer);
     }
 
@@ -562,6 +575,14 @@ public static class TranslatorPanel
 
         var footer = new HBoxContainer();
         var save = ActionButton("Save"); save.Pressed += SaveEditor;
+        var auto = ActionButton("Auto-fill ✨");
+        auto.CustomMinimumSize = new Vector2(150, 40);
+        bool hasKeyE = TranslationStore.LoadApiKey().Length > 0;
+        auto.Disabled = !hasKeyE;
+        auto.TooltipText = hasKeyE
+            ? "Machine-translate the empty entries with DeepL (draft — review, then Save)."
+            : "Set your DeepL API key first — use the \"DeepL key…\" button on the mods list.";
+        auto.Pressed += () => OnAutoFill(auto);
         var reload = ActionButton("Reload File"); reload.Pressed += () =>
         {
             if (_editor != null) _editor.Text = TranslationStore.OverrideText(_mod.Id, _lang, _table);
@@ -581,8 +602,139 @@ public static class TranslatorPanel
                 TranslationSync.ReloadFromDisk();
                 SetStatus("Reset to original.", true, false);
             });
-        footer.AddChild(save); footer.AddChild(reload); footer.AddChild(up); footer.AddChild(reset);
+        footer.AddChild(save); footer.AddChild(auto); footer.AddChild(reload);
+        footer.AddChild(up); footer.AddChild(reset);
         _content.AddChild(footer);
+    }
+
+    // ── 자동 번역(DeepL) ────────────────────────────────────────
+    private static bool _autoBusy;
+
+    /// <summary>
+    /// 편집기의 빈 값들을 DeepL 로 채운다(초안). 키가 없으면 먼저 입력 모달을 띄우고,
+    /// 끝나면 결과를 편집기에 채워 넣되 *자동 저장하지 않는다*(사용자가 검수 후 Save).
+    /// </summary>
+    private static void OnAutoFill(Button btn)
+    {
+        if (_autoBusy || _mod == null || _editor == null) return;
+
+        string key = TranslationStore.LoadApiKey();
+        if (key.Length == 0)
+        {
+            PromptApiKey(() => OnAutoFill(btn)); // 키 저장 후 같은 동작 재시도
+            return;
+        }
+        if (!AutoTranslator.SupportsLanguage(_lang))
+        {
+            SetStatus($"DeepL doesn't support '{_lang}'. You can still translate it by hand.", true, true);
+            return;
+        }
+
+        var mod = _mod; string lang = _lang, table = _table, text = _editor.Text;
+        _autoBusy = true;
+        btn.Disabled = true;
+        SetStatus("Auto-translating with DeepL…", true, false);
+
+        _ = Task.Run(async () =>
+        {
+            var (ok, json, n, err) = await AutoTranslator.FillEditorAsync(mod, table, lang, text, key);
+            // await 이후 연속실행은 Godot 메인 스레드가 아닐 수 있다 → 노드 접근은 CallDeferred 로 마샬.
+            Callable.From(() =>
+            {
+                _autoBusy = false;
+                if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
+                // 사용자가 그새 다른 뷰로 이동했으면 편집기에 쓰지 않는다.
+                if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                if (_view == View.Editor && _editor != null && GodotObject.IsInstanceValid(_editor))
+                {
+                    _editor.Text = json;
+                    SetStatus($"Filled {n} entr{(n == 1 ? "y" : "ies")} via DeepL — review, then Save.", true, false);
+                }
+                else SetStatus($"Translated {n} entries (view changed — reopen to see).", true, false);
+            }).CallDeferred();
+        });
+    }
+
+    /// <summary>
+    /// Files 뷰의 일괄 번역: 현재 모드/언어의 *모든* 테이블 빈 항목을 DeepL 로 채워 디스크에 저장.
+    /// (편집기 검수 단계가 없어 바로 저장 — 이후 개별 파일을 편집기에서 수정 가능.)
+    /// </summary>
+    private static void OnAutoFillAll(Button btn)
+    {
+        if (_autoBusy || _mod == null) return;
+
+        string key = TranslationStore.LoadApiKey();
+        if (key.Length == 0) { PromptApiKey(() => OnAutoFillAll(btn)); return; }
+        if (!AutoTranslator.SupportsLanguage(_lang))
+        {
+            SetStatus($"DeepL doesn't support '{_lang}'. You can still translate it by hand.", true, true);
+            return;
+        }
+
+        var mod = _mod; string lang = _lang;
+        Confirm(
+            "Auto-fill all files",
+            $"Machine-translate every empty entry for {lang} in {mod.Name} with DeepL and save? "
+            + "Existing translations are kept; only blanks are filled. Review afterwards.",
+            "Translate all",
+            () =>
+            {
+                _autoBusy = true;
+                btn.Disabled = true;
+                SetStatus("Auto-translating all files…", true, false);
+                _ = Task.Run(async () =>
+                {
+                    var (ok, filled, files, err) = await AutoTranslator.FillAllTablesAsync(
+                        mod, lang, key,
+                        (i, n, t) => Callable.From(() =>
+                            SetStatus($"Translating {i}/{n}: {t}.json…", true, false)).CallDeferred());
+                    Callable.From(() =>
+                    {
+                        _autoBusy = false;
+                        if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
+                        if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                        TranslationSync.ReloadFromDisk();
+                        string warn = err.Length > 0 ? $"  (stopped early: {err})" : "";
+                        SetStatus(
+                            $"Filled {filled} entr{(filled == 1 ? "y" : "ies")} across {files} file(s) — "
+                            + $"review & edit as needed.{warn}", true, err.Length > 0);
+                        if (_view == View.Files) RebuildContent();
+                    }).CallDeferred();
+                });
+            });
+    }
+
+    /// <summary>DeepL API 키 입력 모달(AcceptDialog + LineEdit). 저장 시 onSaved 실행.</summary>
+    private static void PromptApiKey(Action? onSaved = null)
+    {
+        if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+        var dlg = new AcceptDialog
+        {
+            Title = "DeepL API key",
+            OkButtonText = "Save",
+            MinSize = new Vector2I(620, 0),
+        };
+        var box = new VBoxContainer();
+        box.AddChild(Lbl("Paste your DeepL API key. The free tier (500,000 chars/month) works —", GRAY));
+        box.AddChild(Lbl("get one at deepl.com/pro-api. Stored locally only; never bundled into exports.", GRAY));
+        var le = new LineEdit
+        {
+            Text = TranslationStore.LoadApiKey(),
+            PlaceholderText = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
+            CustomMinimumSize = new Vector2(560, 36),
+        };
+        box.AddChild(le);
+        dlg.AddChild(box);
+
+        dlg.Confirmed += () =>
+        {
+            TranslationStore.SaveApiKey(le.Text);
+            if (le.Text.Trim().Length > 0) onSaved?.Invoke();
+            if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree();
+        };
+        dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
+        _root.AddChild(dlg);
+        dlg.PopupCentered();
     }
 
     private static void SaveEditor()

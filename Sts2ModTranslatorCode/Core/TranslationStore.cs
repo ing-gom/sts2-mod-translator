@@ -471,6 +471,27 @@ public static class TranslationStore
     }
 
     /// <summary>
+    /// 자동 번역(DeepL)용 API 키. 루트에 평문 저장되며 *로컬 전용* — 내보내는 번역 모드에는
+    /// 포함되지 않는다(ExportMod 는 translations\ 와 매니페스트만 쓴다). 비어 있으면 "".
+    /// </summary>
+    public static string LoadApiKey()
+    {
+        try
+        {
+            string p = ReadPath(Path.Combine(Root, "deepl_key" + DataExt));
+            return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8).Trim() : "";
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>DeepL API 키를 로컬에 저장(다음 자동 번역에 재사용).</summary>
+    public static void SaveApiKey(string key)
+    {
+        try { WriteRaw(Path.Combine(Root, "deepl_key" + DataExt), (key ?? "").Trim()); }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
     /// 한 대상 모드의 (비어 있지 않은) 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보낸다.
     /// 결과 레이아웃:
     ///   {destRoot}/{modId}_Translation/

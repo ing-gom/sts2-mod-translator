@@ -22,11 +22,22 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 [*][b]Upload[/b] a translation file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow
 [/list]
 
+[h2]Machine-translate a first draft (DeepL)[/h2]
+Don't want to start from a blank template? Fill the empty entries automatically with [b]DeepL[/b], then review and Save.
+[list]
+[*]Paste your own [b]DeepL API key[/b] once — the free tier (500,000 characters/month) is plenty. Use the [b]DeepL key…[/b] button in the mod list. Your key is stored [b]locally only[/b] and is never included in exported translation packs.
+[*]In the editor, press [b]Auto-fill[/b] to draft the empty entries of the current file; or [b]Auto-fill all[/b] in the file list to do every file at once.
+[*]It only fills [b]blank[/b] entries — your existing translations are never overwritten. The per-file Auto-fill lets you review before saving; Auto-fill all saves directly so you can then edit.
+[*][b]Placeholders and markup are protected[/b] — variables (e.g. [i]{Damage}[/i]), icon/image tags, and highlight tags like [i][gold]…[/gold][/i] are preserved so machine translation can't break them.
+[*]Works for every DeepL-supported language. It's a [b]draft[/b] — game-specific terms still deserve a quick human pass, which the review step is built for. The Auto-fill buttons stay disabled until a key is set.
+[/list]
+
 [h2]Features[/h2]
 [list]
 [*]Drill-down panel: Mods ▸ Languages ▸ Files
 [*]Per-mod / per-language progress (coverage %)
 [*]Auto-generated templates — original text for reference + empty fields to fill
+[*][b]Optional machine-translation (DeepL)[/b] to draft empty entries, placeholder/markup-safe, bring-your-own key (local only)
 [*]Untranslated entries safely fall back to the original text
 [/list]
 
