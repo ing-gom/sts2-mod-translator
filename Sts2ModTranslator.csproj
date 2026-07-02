@@ -38,6 +38,11 @@
         <None Include="Sts2ModTranslator.json" />
     </ItemGroup>
 
+    <!-- 게임 pck 에서 추출한 STS 키워드 정식 번역(13개 언어). EnforceGlossary 가 로드해 하이라이트 키워드를 교정. -->
+    <ItemGroup>
+        <EmbeddedResource Include="glossary.json" />
+    </ItemGroup>
+
     <Target Name="CheckDependencyPaths">
         <Error Text=" Slay the Spire 2 data not found at path '$(Sts2DataDir)'"
                Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)')" />

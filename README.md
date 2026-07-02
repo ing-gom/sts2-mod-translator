@@ -28,6 +28,15 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Reference-language toggle: if a mod already ships other languages, switch the left pane to compare against them.
 - Line numbers + JSON validation on save.
 
+### Machine-translation drafts (DeepL)
+
+To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:
+
+- Set your DeepL API key once (**Auto-translate…** on the mods list — the free tier works).
+- **Auto-fill ✨** drafts the open file; **Auto-fill all ✨** drafts every file for the current language. Existing translations are never overwritten — only blanks are filled, as a draft to review.
+- **Keyword accuracy:** highlighted game keywords (`Vulnerable`, `Block`, `Exhaust`, …) are corrected to the game's own official term in your language — extracted from the game's localization for 13 languages — so drafts match in-game wording even when the machine translation doesn't.
+- **Placeholders** (`!D!`, `[color]…[/color]`, `{…}`) are protected so the translation can't corrupt them.
+
 ### Files
 
 Translations live under the mod's `Translations/` folder (use **Open Folder**), with a fallback to `%APPDATA%\Sts2ModTranslator\` if the mod folder isn't writable.

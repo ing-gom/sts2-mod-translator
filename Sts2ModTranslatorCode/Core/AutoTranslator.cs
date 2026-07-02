@@ -29,6 +29,11 @@ public static class AutoTranslator
     private static readonly Regex StandaloneRx =
         new(@"\G(\[[^\[\]]*\]|<[^<>]*>)", RegexOptions.Compiled);
 
+    // !변수! 플레이스홀더(일부 모드: !ChargeCost!, !D!). CamelCase/숫자/_ 만 — 문장 속 느낌표("Wow!")
+    // 오탐을 피하려 보수적으로: '!' 뒤 곧바로 영문자 + 단어문자 + '!'. 통째 보존(<ph>).
+    private static readonly Regex VarBangRx =
+        new(@"\G![A-Za-z][A-Za-z0-9_]*!", RegexOptions.Compiled);
+
     // 안쪽이 '데이터'(이미지 경로 등)라 통째로 보존해야 하는 짝 태그: [img]path[/img] 등.
     // 짝 태그지만 안쪽을 번역시키면 안 되므로 전체를 하나의 단독 토큰으로 취급한다.
     private static readonly Regex OpaquePairedRx =
@@ -121,7 +126,7 @@ public static class AutoTranslator
 
         try
         {
-            var (n, err) = await FillDictAsync(eng, cur, source, target, apiKey);
+            var (n, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
             if (err.Length > 0) return (false, editorJson, 0, err);
             if (n == 0)
                 return (false, editorJson, 0,
@@ -164,7 +169,7 @@ public static class AutoTranslator
             int n;
             try
             {
-                var (c, err) = await FillDictAsync(eng, cur, source, target, apiKey);
+                var (c, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
                 if (err.Length > 0) { lastErr = err; break; } // API 오류 → 나머지 중단
                 n = c;
             }
@@ -187,7 +192,7 @@ public static class AutoTranslator
     /// </summary>
     private static async Task<(int count, string error)> FillDictAsync(
         Dictionary<string, string> eng, Dictionary<string, string> cur,
-        string? source, string target, string apiKey)
+        string? source, string target, string stsTarget, string apiKey)
     {
         // 대상 = 값이 비어 있고, 원문에 번역할 텍스트가 있는 키. 기존 키 순서를 유지.
         var keys = cur.Where(kv => string.IsNullOrEmpty(kv.Value)
@@ -220,7 +225,7 @@ public static class AutoTranslator
         }
 
         for (int k = 0; k < keys.Count; k++)
-            cur[keys[k]] = Unmask(translated[k], masked[k], target);
+            cur[keys[k]] = Unmask(translated[k], masked[k], stsTarget);
         return (keys.Count, "");
     }
 
@@ -284,8 +289,9 @@ public static class AutoTranslator
     private sealed class Masked
     {
         public string Xml = "";
-        // gN 복원용 (열기/닫기 원문 마크업). 인덱스 N = 태그 번호.
-        public readonly List<(string open, string close)> Pairs = new();
+        // gN 복원용 (열기/닫기 원문 마크업 + 감싼 원문 텍스트). 인덱스 N = 태그 번호.
+        // inner 는 글로서리 키워드 강제(EnforceGlossary)에 쓴다.
+        public readonly List<(string open, string close, string inner)> Pairs = new();
     }
 
     private static Masked Mask(string s)
@@ -336,6 +342,12 @@ public static class AutoTranslator
                     ma.Groups[3].Value, sb, m);
                 i += ma.Length; continue;
             }
+            Match mv = VarBangRx.Match(s, i);
+            if (mv.Success && mv.Index == i)
+            {
+                sb.Append("<ph>").Append(XmlEscape(mv.Value)).Append("</ph>");
+                i += mv.Length; continue;
+            }
             Match ms = StandaloneRx.Match(s, i);
             if (ms.Success && ms.Index == i)
             {
@@ -351,7 +363,7 @@ public static class AutoTranslator
     private static void EmitPair(string open, string close, string inner, StringBuilder sb, Masked m)
     {
         int n = m.Pairs.Count;
-        m.Pairs.Add((open, close));
+        m.Pairs.Add((open, close, inner));
         sb.Append("<g").Append(n).Append('>');
         MaskInto(inner, sb, m);
         sb.Append("</g").Append(n).Append('>');
@@ -468,17 +480,66 @@ public static class AutoTranslator
         return cnt;
     }
 
-    // <ph>/<gN> 래퍼를 벗기고(짝 태그는 원문 마크업으로 복원) XML 엔티티를 원복.
-    private static string Unmask(string xml, Masked m, string target)
+    // STS 키워드의 게임 공식 번역(13개 언어). SlayTheSpire2.pck 의 powers/card_keywords/afflictions/orbs
+    // /static_hover_tips 의 .title 에서 추출해 glossary.json(임베디드 리소스)로 동봉 — 언어당 수백 개.
+    // 구조: { "kor": { "Vulnerable": "취약", ... }, "jpn": {...}, ... }. 언어 키는 STS 코드(대소문자 무관),
+    // 영문 키워드는 카드 텍스트 표기와 정확히 일치(대소문자 구분). 없거나 로드 실패 시 빈 표(교정 no-op).
+    private static readonly Dictionary<string, Dictionary<string, string>> Glossary = LoadGlossary();
+
+    private static Dictionary<string, Dictionary<string, string>> LoadGlossary()
     {
-        xml = PhQuoteRx.Replace(xml, "$1");       // 플레이스홀더 따옴표 제거(언어 무관)
-        xml = CollapseDuplicateSpans(xml, m);     // DeepL 이 쪼갠 중복 <gN> 스팬 병합
-        xml = TrimHighlightSpans(xml, m, target); // 하이라이트 정리(따옴표 공통 + 조사 KO만)
+        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var asm = typeof(AutoTranslator).Assembly;
+            string? name = asm.GetManifestResourceNames()
+                .FirstOrDefault(n => n.EndsWith("glossary.json", StringComparison.OrdinalIgnoreCase));
+            if (name == null) return result;
+            using var s = asm.GetManifestResourceStream(name);
+            if (s == null) return result;
+            using var r = new StreamReader(s, Encoding.UTF8);
+            var raw = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(r.ReadToEnd());
+            if (raw != null)
+                foreach (var (lang, map) in raw)
+                    result[lang] = new Dictionary<string, string>(map, StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] glossary 로드 실패(교정 비활성): {ex.Message}");
+        }
+        return result;
+    }
+
+    // <ph>/<gN> 래퍼를 벗기고(짝 태그는 원문 마크업으로 복원) XML 엔티티를 원복.
+    private static string Unmask(string xml, Masked m, string stsTarget)
+    {
+        // josa/따옴표 정리는 DeepL 타깃 코드(KO 등)로 판단.
+        string josaTarget = DeepLTarget(stsTarget) ?? (stsTarget ?? "").ToUpperInvariant();
+        xml = PhQuoteRx.Replace(xml, "$1");           // 플레이스홀더 따옴표 제거(언어 무관)
+        xml = CollapseDuplicateSpans(xml, m);         // DeepL 이 쪼갠 중복 <gN> 스팬 병합
+        xml = EnforceGlossary(xml, m, stsTarget);     // 하이라이트 키워드 → 공식 용어 강제(DeepL 오역 교정)
+        xml = TrimHighlightSpans(xml, m, josaTarget); // 하이라이트 정리(따옴표 공통 + 조사 KO만)
         // 뒤 번호부터 복원(<g1> 이 <g10> 안에 섞이지 않게 — '>' 로 이미 안전하지만 안전제일).
         for (int n = m.Pairs.Count - 1; n >= 0; n--)
             xml = xml.Replace($"<g{n}>", m.Pairs[n].open)
                      .Replace($"</g{n}>", m.Pairs[n].close);
         return XmlUnescape(xml.Replace("<ph>", "").Replace("</ph>", ""));
+    }
+
+    // <gN> 하이라이트로 감싼 원문이 정확히 글로서리 키워드면, 그 안의 (오)번역을 공식 용어로 교체.
+    // 결정적 — DeepL 이 용어를 틀려도 여기서 바로잡는다. 용어표 없는 언어는 no-op.
+    // (STS 카드 텍스트는 키워드를 [color]/[gold] 로 감싸므로 이 경로가 대부분을 커버.)
+    private static string EnforceGlossary(string xml, Masked m, string? stsTarget)
+    {
+        if (!Glossary.TryGetValue(stsTarget ?? "", out var g) || g.Count == 0) return xml;
+        for (int n = 0; n < m.Pairs.Count; n++)
+        {
+            string innerEng = (m.Pairs[n].inner ?? "").Trim();
+            if (innerEng.Length == 0 || !g.TryGetValue(innerEng, out var term)) continue;
+            var rx = new Regex($"<g{n}>.*?</g{n}>", RegexOptions.Singleline);
+            xml = rx.Replace(xml, $"<g{n}>" + XmlEscape(term) + $"</g{n}>", 1);
+        }
+        return xml;
     }
 
     private static string XmlEscape(string s) => s
