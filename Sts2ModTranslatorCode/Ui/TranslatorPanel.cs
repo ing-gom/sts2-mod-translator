@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Helpers;
@@ -30,6 +32,7 @@ public static class TranslatorPanel
     private static VBoxContainer? _content;
     private static TextEdit? _editor;
     private static Label? _status;
+    private static Label? _emptyLbl;
 
     private static View _view = View.Mods;
     private static SupportedMod? _mod;
@@ -188,6 +191,7 @@ public static class TranslatorPanel
         if (_content == null) return;
         foreach (var c in _content.GetChildren()) c.QueueFree();
         _editor = null;
+        _emptyLbl = null;
 
         switch (_view)
         {
@@ -444,7 +448,7 @@ public static class TranslatorPanel
             {
                 Text = invalid
                     ? $"{t}.json     ⚠ JSON error — open & fix"
-                    : $"{t}.json     {pct}%  ({tr}/{tot})",
+                    : $"{t}.json     {pct}%  ({tr}/{tot}){(tot > tr ? $"   ◦ {tot - tr} empty" : "")}",
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             };
             lbl.AddThemeColorOverride("font_color", invalid ? RED : WHITE);
@@ -559,7 +563,23 @@ public static class TranslatorPanel
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
         };
-        ovCol.AddChild(Lbl($"Translation ({_lang})", GOLD));
+        // 헤더: 제목 + 빈 항목 카운트 + '다음 빈 항목' 점프(자동 채우기가 건너뛴 곳 찾기용).
+        var ovHeader = new HBoxContainer();
+        var ovTitle = Lbl($"Translation ({_lang})", GOLD);
+        ovTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        ovHeader.AddChild(ovTitle);
+        _emptyLbl = new Label();
+        _emptyLbl.AddThemeFontSizeOverride("font_size", 16);
+        ovHeader.AddChild(_emptyLbl);
+        var nextEmpty = ActionButton("Next empty ▼");
+        nextEmpty.CustomMinimumSize = new Vector2(150, 36);
+        nextEmpty.TooltipText =
+            "Jump to the next untranslated (empty) entry.\n"
+            + "Auto-fill skips keys whose source text is empty — find & fill them by hand here.";
+        nextEmpty.Pressed += JumpToNextEmpty;
+        ovHeader.AddChild(nextEmpty);
+        ovCol.AddChild(ovHeader);
+
         _editor = new CodeEdit
         {
             Text = TranslationStore.OverrideText(_mod.Id, _lang, _table),
@@ -568,7 +588,9 @@ public static class TranslatorPanel
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
+        _editor.TextChanged += UpdateEmptyCount;
         ovCol.AddChild(_editor);
+        UpdateEmptyCount();
         panes.AddChild(ovCol);
 
         _content!.AddChild(panes);
@@ -586,6 +608,7 @@ public static class TranslatorPanel
         var reload = ActionButton("Reload File"); reload.Pressed += () =>
         {
             if (_editor != null) _editor.Text = TranslationStore.OverrideText(_mod.Id, _lang, _table);
+            UpdateEmptyCount();
             SetStatus("Reloaded from disk.", true, false);
         };
         var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(_table);
@@ -599,12 +622,58 @@ public static class TranslatorPanel
             {
                 TranslationStore.ResetOverride(emod, elang, tbl);
                 if (_editor != null) _editor.Text = TranslationStore.OverrideText(emod.Id, elang, tbl);
+                UpdateEmptyCount();
                 TranslationSync.ReloadFromDisk();
                 SetStatus("Reset to original.", true, false);
             });
         footer.AddChild(save); footer.AddChild(auto); footer.AddChild(reload);
         footer.AddChild(up); footer.AddChild(reset);
         _content.AddChild(footer);
+    }
+
+    // ── 빈 항목 탐색 ────────────────────────────────────────────
+    // ToPrettyJson 이 키당 한 줄을 보장하므로("KEY": "",) 라인 정규식으로 빈 값 항목을 찾는다.
+    private static readonly Regex EmptyEntryRx =
+        new(@"^\s*""(?:[^""\\]|\\.)+""\s*:\s*""""\s*,?\s*$", RegexOptions.Compiled);
+
+    private static List<int> EmptyEntryLines(TextEdit ed)
+    {
+        var lines = new List<int>();
+        int n = ed.GetLineCount();
+        for (int i = 0; i < n; i++)
+            if (EmptyEntryRx.IsMatch(ed.GetLine(i))) lines.Add(i);
+        return lines;
+    }
+
+    private static void UpdateEmptyCount()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        if (_emptyLbl == null || !GodotObject.IsInstanceValid(_emptyLbl)) return;
+        int n = EmptyEntryLines(_editor).Count;
+        _emptyLbl.Text = n == 0 ? "all filled ✓  " : $"{n} empty  ";
+        _emptyLbl.AddThemeColorOverride("font_color", n == 0 ? GRAY : GOLD);
+    }
+
+    /// <summary>캐럿 다음의 빈 항목 줄로 점프(끝이면 처음으로 wrap). 값의 "" 사이에 캐럿을 놓는다.</summary>
+    private static void JumpToNextEmpty()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        var lines = EmptyEntryLines(_editor);
+        UpdateEmptyCount();
+        if (lines.Count == 0)
+        {
+            SetStatus("No empty entries in this file — everything is filled.", true, false);
+            return;
+        }
+        int cur = _editor.GetCaretLine();
+        int next = lines.FirstOrDefault(l => l > cur, lines[0]); // wrap-around
+        _editor.SetCaretLine(next);
+        string line = _editor.GetLine(next);
+        int q = line.LastIndexOf('"');                 // 닫는 따옴표 → 그 앞("" 사이)에 캐럿
+        _editor.SetCaretColumn(Math.Max(0, q));
+        _editor.CenterViewportToCaret();
+        _editor.GrabFocus();
+        SetStatus($"Empty entry {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}).", true, false);
     }
 
     // ── 자동 번역(DeepL) ────────────────────────────────────────
@@ -648,7 +717,12 @@ public static class TranslatorPanel
                 if (_view == View.Editor && _editor != null && GodotObject.IsInstanceValid(_editor))
                 {
                     _editor.Text = json;
-                    SetStatus($"Filled {n} entr{(n == 1 ? "y" : "ies")} via DeepL — review, then Save.", true, false);
+                    UpdateEmptyCount();
+                    int left = EmptyEntryLines(_editor).Count;
+                    SetStatus(
+                        $"Filled {n} entr{(n == 1 ? "y" : "ies")} via DeepL — review, then Save."
+                        + (left > 0 ? $"  ({left} still empty — use \"Next empty ▼\" to find them.)" : ""),
+                        true, false);
                 }
                 else SetStatus($"Translated {n} entries (view changed — reopen to see).", true, false);
             }).CallDeferred();

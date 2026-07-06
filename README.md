@@ -27,6 +27,7 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Side-by-side panes: original (read-only) on the left, your translation on the right.
 - Reference-language toggle: if a mod already ships other languages, switch the left pane to compare against them.
 - Line numbers + JSON validation on save.
+- **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. Handy for finding the few entries auto-fill skips (those whose source text is itself empty). The file list also shows an `◦ N empty` tag per file.
 
 ### Machine-translation drafts (DeepL)
 

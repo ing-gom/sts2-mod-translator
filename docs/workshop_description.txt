@@ -19,6 +19,7 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 [*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right
 [*][b]Reference dropdown[/b] — switch the left pane between any language the mod ships (e.g. compare against the existing Chinese/English), or pick [b]pack: <lang>[/b] to read an installed translation pack's text while you work
 [*][b]Line numbers[/b] for easy navigation, with JSON validation on save
+[*][b]Empty-entry navigator[/b] — a live count of how many entries are still blank, plus a [b]Next empty ▼[/b] button that jumps to the next untranslated line (great for finding the few entries auto-fill skips). Each file in the list also shows an [i]◦ N empty[/i] tag.
 [*][b]Upload[/b] a translation file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow
 [/list]
 
