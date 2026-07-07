@@ -38,6 +38,10 @@ To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:
 - **Keyword accuracy:** highlighted game keywords (`Vulnerable`, `Block`, `Exhaust`, …) are corrected to the game's own official term in your language — extracted from the game's localization for 13 languages — so drafts match in-game wording even when the machine translation doesn't.
 - **Placeholders** (`!D!`, `[color]…[/color]`, `{…}`) are protected so the translation can't corrupt them.
 
+### BaseLib mods
+
+Mods built on the **BaseLib** framework (e.g. FGO-based mods) author their text with a shorthand — `!Damage!`/`!D!` for values, `*keyword*` for gold highlights, `#` to opt a string in — which BaseLib rewrites to the game's native format *when it loads the mod's files*. Because this mod injects translations at runtime (bypassing that file-load step), injected text is now run through BaseLib's own converter just before it's applied, so `!Var!`/`*keyword*` render as numbers/highlights in-game instead of showing the raw shorthand. Non-BaseLib mods (and text already in `{…}` form) are unaffected; the step is a no-op when BaseLib isn't installed.
+
 ### Files
 
 Translations live under the mod's `Translations/` folder (use **Open Folder**), with a fallback to `%APPDATA%\Sts2ModTranslator\` if the mod folder isn't writable.

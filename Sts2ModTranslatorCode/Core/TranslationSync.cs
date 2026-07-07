@@ -217,7 +217,9 @@ public static class TranslationSync
                 if (dict.Count == 0) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue; // 게임에 없는 테이블 — 스킵
-                try { lt.MergeWith(dict); }
+                // 주입 전 BaseLib SimpleLoc 저작 문법(#, !Var!, *gold*, [E] 등)을 STS2 네이티브로 변환.
+                // BaseLib 미사용 모드/일반 값은 그대로 통과(무해). → 게임에 '!Var!' 원형이 노출되던 문제 해소.
+                try { lt.MergeWith(SimpleLocCompat.ApplyAll(dict)); }
                 catch (Exception ex)
                 {
                     MainFile.Logger.Warn($"[Sts2ModTranslator] merge 실패 {mod.Id}/{table}: {ex.Message}");
@@ -237,7 +239,8 @@ public static class TranslationSync
                 if (dict.Count == 0) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue;
-                try { lt.MergeWith(new Dictionary<string, string>(dict)); }
+                // 번역 팩(bundled)도 동일하게 SimpleLoc 문법을 변환해 주입(ApplyAll 이 새 dict 생성).
+                try { lt.MergeWith(SimpleLocCompat.ApplyAll(dict)); }
                 catch (Exception ex)
                 {
                     MainFile.Logger.Warn($"[Sts2ModTranslator] bundled merge 실패 {targetId}/{table}: {ex.Message}");

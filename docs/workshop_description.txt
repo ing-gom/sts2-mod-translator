@@ -30,6 +30,7 @@ Don't want to start from a blank template? Fill the empty entries automatically 
 [*]In the editor, press [b]Auto-fill[/b] to draft the empty entries of the current file; or [b]Auto-fill all[/b] in the file list to do every file at once.
 [*]It only fills [b]blank[/b] entries — your existing translations are never overwritten. The per-file Auto-fill lets you review before saving; Auto-fill all saves directly so you can then edit.
 [*][b]Placeholders and markup are protected[/b] — variables (e.g. [i]{Damage}[/i]), icon/image tags, and highlight tags like [i][gold]…[/gold][/i] are preserved so machine translation can't break them.
+[*][b]BaseLib mods supported[/b] — mods built on the BaseLib framework (e.g. FGO-based mods) author text with a shorthand such as [i]!Damage![/i] or [i]*keyword*[/i]. Your translations are now converted the same way the original is, so those values render as numbers/highlights in-game instead of showing the raw [i]!Var![/i] text.
 [*]Works for every DeepL-supported language. It's a [b]draft[/b] — game-specific terms still deserve a quick human pass, which the review step is built for. The Auto-fill buttons stay disabled until a key is set.
 [/list]
 
