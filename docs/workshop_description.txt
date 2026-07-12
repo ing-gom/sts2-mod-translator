@@ -1,11 +1,31 @@
 [h1]STS2 Mod Translator[/h1]
 Translate the text of [b]other mods[/b] into [b]any language[/b] — right inside the game, without rebuilding them.
 
-[i]A utility/tool mod. It reads the localized text of your other installed mods and lets you supply your own translations, which are injected back into the game at runtime — cards, relics, powers, characters and more, even for mods that don't ship your language.[/i]
+[i]A utility/tool mod. It reads the localized text of your installed mods and lets you supply your own translations, injected back into the game at runtime — cards, relics, powers, characters and more, even for mods that don't ship your language.[/i]
 
 [hr][/hr]
 
-[h2]How to use[/h2]
+[h2]🌐 Quick start · 빠른 시작 · 快速开始 · クイックスタート · Быстрый старт[/h2]
+[b]EN[/b]  🎮 Play a mod in your language → just subscribe to a translation pack that requires this mod.  ✍️ Translate one yourself → Main Menu ▸ Mod Translator, pick a mod & language, fill the text (DeepL can draft it).
+[b]한국어[/b]  🎮 모드를 내 언어로 플레이 → 이 모드를 필요로 하는 번역팩을 구독하면 끝.  ✍️ 직접 번역 → 메인 메뉴 ▸ 모드 번역기(Mod Translator)에서 모드·언어를 고른 뒤 텍스트 입력 (DeepL 자동 초안 지원).
+[b]简体中文[/b]  🎮 用你的语言游玩某模组 → 订阅一个依赖本模组的翻译包即可。  ✍️ 自己翻译 → 打开主菜单 ▸ 模组翻译器(Mod Translator)，选择模组和语言并填写文本（可用 DeepL 生成初稿）。
+[b]日本語[/b]  🎮 MODを自分の言語で遊ぶ → 本MODを必要とする翻訳パックをサブスクライブするだけ。  ✍️ 自分で翻訳 → メインメニュー ▸ MOD翻訳ツール(Mod Translator)を開き、MODと言語を選んでテキストを入力（DeepLで下訳可）。
+[b]Русский[/b]  🎮 Играть в мод на своём языке → подпишитесь на пакет перевода, требующий этот мод.  ✍️ Перевести самому → Главное меню ▸ Переводчик модов (Mod Translator), выберите мод и язык, заполните текст (черновик через DeepL).
+
+[hr][/hr]
+
+[h2]🎮 Just want to play in your language?[/h2]
+You don't need to translate anything yourself. If someone already made a translation pack for a mod:
+[list]
+[*]Subscribe to that [b]translation pack[/b] on the Workshop [b]and[/b] to this mod (Mod Translator). The pack lists this mod as required, so subscribing to it normally offers this one too.
+[*]Launch the game in your language — the text applies automatically. No setup, no editing, no load-order to worry about.
+[*][b]Finding packs:[/b] search the Workshop for the mod's name plus [i]Translation[/i] / [i]번역[/i] / [i]翻訳[/i] / [i]汉化[/i], or check the original mod's Workshop page for a linked translation.
+[/list]
+Everything below is for people who want to [b]create[/b] a translation.
+
+[hr][/hr]
+
+[h2]✍️ Create a translation — how to use[/h2]
 [olist]
 [*]Enable this mod and launch the game in the language you want to translate into.
 [*]Open [b]Main Menu ▸ Mod Translator[/b] (it sits next to Settings).
@@ -16,69 +36,44 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 
 [h2]In-game editor[/h2]
 [list]
-[*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right
-[*][b]Reference dropdown[/b] — switch the left pane between any language the mod ships (e.g. compare against the existing Chinese/English), or pick [b]pack: <lang>[/b] to read an installed translation pack's text while you work
-[*][b]Line numbers[/b] for easy navigation, with JSON validation on save
-[*][b]Empty-entry navigator[/b] — a live count of how many entries are still blank, plus a [b]Next empty ▼[/b] button that jumps to the next untranslated line (great for finding the few entries auto-fill skips). Each file in the list also shows an [i]◦ N empty[/i] tag.
-[*][b]Upload[/b] a translation file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow
+[*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right.
+[*][b]Reference dropdown[/b] — switch the left pane to any language the mod ships (compare against the existing Chinese/English), or [b]pack: <lang>[/b] to read an installed pack while you work.
+[*][b]Line numbers[/b] and JSON validation on save.
+[*][b]Empty-entry navigator[/b] — a live blank count plus a [b]Next empty ▼[/b] button that jumps to the next untranslated line. Each file also shows an [i]◦ N empty[/i] tag.
+[*][b]Upload[/b] a file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow.
 [/list]
 
 [h2]Machine-translate a first draft (DeepL)[/h2]
-Don't want to start from a blank template? Fill the empty entries automatically with [b]DeepL[/b], then review and Save.
+Don't want to start from a blank template? Fill empty entries automatically with [b]DeepL[/b], then review and Save — it only ever fills [b]blank[/b] entries, so your own work is never overwritten.
 [list]
-[*]Paste your own [b]DeepL API key[/b] once — the free tier (500,000 characters/month) is plenty. Use the [b]DeepL key…[/b] button in the mod list. Your key is stored [b]locally only[/b] and is never included in exported translation packs.
-[*]In the editor, press [b]Auto-fill[/b] to draft the empty entries of the current file; or [b]Auto-fill all[/b] in the file list to do every file at once.
-[*]It only fills [b]blank[/b] entries — your existing translations are never overwritten. The per-file Auto-fill lets you review before saving; Auto-fill all saves directly so you can then edit.
-[*][b]Placeholders and markup are protected[/b] — variables (e.g. [i]{Damage}[/i]), icon/image tags, and highlight tags like [i][gold]…[/gold][/i] are preserved so machine translation can't break them.
-[*][b]BaseLib mods supported[/b] — mods built on the BaseLib framework (e.g. FGO-based mods) author text with a shorthand such as [i]!Damage![/i] or [i]*keyword*[/i]. Your translations are now converted the same way the original is, so those values render as numbers/highlights in-game instead of showing the raw [i]!Var![/i] text.
-[*]Works for every DeepL-supported language. It's a [b]draft[/b] — game-specific terms still deserve a quick human pass, which the review step is built for. The Auto-fill buttons stay disabled until a key is set.
+[*]Paste your own [b]DeepL API key[/b] once (the free tier's 500,000 chars/month is plenty) via the [b]DeepL key…[/b] button. The key is stored [b]locally only[/b] and never ends up in exported packs.
+[*][b]Auto-fill[/b] drafts the current file; [b]Auto-fill all[/b] does every file at once. The buttons stay disabled until a key is set.
+[*][b]Placeholders and markup are protected[/b] — variables ([i]{Damage}[/i]), icon/image tags and highlight tags ([i][gold]…[/gold][/i]) are preserved so machine translation can't break them.
+[*][b]BaseLib mods supported[/b] — shorthand like [i]!Damage![/i] or [i]*keyword*[/i] (used by FGO-based mods) is converted like the original, so it renders as numbers/highlights instead of raw [i]!Var![/i] text.
 [/list]
-
-[h2]Features[/h2]
-[list]
-[*]Drill-down panel: Mods ▸ Languages ▸ Files
-[*]Per-mod / per-language progress (coverage %)
-[*]Auto-generated templates — original text for reference + empty fields to fill
-[*][b]Optional machine-translation (DeepL)[/b] to draft empty entries, placeholder/markup-safe, bring-your-own key (local only)
-[*]Untranslated entries safely fall back to the original text
-[/list]
+It's a [b]draft[/b] for every DeepL-supported language — game-specific terms still deserve a quick human pass.
 
 [h2]Share translations as a standalone mod[/h2]
-Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Other players install your translation mod (plus this one) and the text applies automatically, with no editing.
+Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Others install your pack (plus this mod) and the text applies automatically, no editing.
 [list]
-[*]Enter your name in [b]Author[/b], pick a mod, then press [b]Install as mod[/b] — it creates a ready-to-ship translation mod directly in your local [i]<STS2>/mods/[/i] folder (named [i]<ModName>_Translation[/i], with the manifest plus your translations for every language you worked on).
-[*][b]Recognized by the Steam Workshop[/b] — because it's a normal mod sitting in your local mods folder, you can publish it to the Workshop exactly like any other mod. Subscribers who also have [b]Mod Translator[/b] get your text automatically.
-[*]Restart the game to load and test it first. To hand the file to someone directly instead, just zip that folder.
-[*]No DLL or coding needed — a translation mod is pure data plus a manifest that declares this one as a dependency (the required [b]Mod Translator[/b] version is filled in for you).
-[*]Installed translation packs are detected at boot and applied last, so your own in-editor edits still win over a pack, and a pack wins over the original text.
-[*]See which packs are installed and [b]how much of each language they cover[/b] (e.g. [i]pack: kor 87%[/i]) in the mod list. To inspect a pack's text, open a mod ▸ [b]Edit[/b] and choose [b]pack: <lang>[/b] in the Reference dropdown.
+[*]Enter your name in [b]Author[/b], pick a mod, press [b]Install as mod[/b] — it builds a ready-to-ship [i]<ModName>_Translation[/i] mod in your local [i]<STS2>/mods/[/i] folder (manifest + your translations for every language you worked on). No DLL or coding needed.
+[*][b]Bundle many mods into one pack[/b] — on the mod list press [b]Bundle pack…[/b], tick several translated mods, name it, and [b]Install pack to mods[/b] to ship them all as a single Workshop item instead of one per mod.
+[*][b]Update without re-picking[/b] — an [b]Existing packs ▾[/b] menu re-loads a pack you already deployed (re-ticks its mods and bumps the version); a [b]Reset[/b] button clears everything to start a fresh pack.
+[*][b]Publish to the Workshop[/b] like any normal mod — subscribers who also have [b]Mod Translator[/b] get your text. Or just zip the folder to hand it over. Restart the game to test it first.
+[*]Installed packs are detected at boot and applied last: your in-editor edits beat a pack, a pack beats the original. The mod list shows each pack's per-language coverage (e.g. [i]pack: kor 87%[/i]).
 [/list]
 
 [h2]Updating a translation mod[/h2]
-When the original mod updates (new cards, relics, or reworded text), keeping your translation in sync is easy:
-[list]
-[*][b]New text is detected automatically[/b] — relaunch with this mod enabled and the translator picks up the original's new keys, adding empty fields for them while keeping every translation you already did.
-[*][b]Translate only the gaps[/b] — open the mod and the language; coverage drops below 100% and the new lines are the empty entries. Your existing work is untouched, and removed lines safely fall back to the original.
-[*][b]Re-install with a bumped version[/b] — press [b]Install as mod[/b] again. When a translation mod is already installed, it shows its current version, the button reads [b]Update installed mod[/b], and the [b]Version[/b] field is pre-filled with the next patch (e.g. [i]1.0.0 → 1.0.1[/i]). Type your own number if you prefer.
-[*][b]Re-upload[/b] — push the refreshed folder to the same Workshop item. Subscribers who also have [b]Mod Translator[/b] get the updated text on their next sync.
-[/list]
-
-[h2]Where the files are[/h2]
-Translations live under the mod's [i]Translations[/i] folder (use [b]Open Folder[/b]). Each mod/language has editable [i]overrides[/i] plus a read-only [i]source[/i] reference of the original text.
+When the original mod updates (new cards, reworded text), staying in sync is easy: relaunch and new keys are [b]detected automatically[/b] as empty entries — your existing work is untouched and removed lines fall back to the original. Translate only the gaps, press [b]Install as mod[/b] again ([b]Update installed mod[/b] pre-fills the next version), and re-upload to the same Workshop item.
 
 [h2]Translation tips[/h2]
-Keep these intact and change only the human-readable text:
-[list]
-[*]Placeholders like [b]!D![/b], [b]!B![/b], [b]!Crit![/b] — numbers are substituted in automatically
-[*]Markup such as [b]*[/b]keyword, leading [b]#[/b], [b]/+[/b], and [b][color][/b] tags
-[/list]
-Leave a value [b]empty[/b] to keep the original (English) text for that entry.
+Keep placeholders ([b]!D![/b], [b]!B![/b], [b]!Crit![/b]) and markup ([b]*[/b]keyword, leading [b]#[/b], [b]/+[/b], [b][color][/b] tags) intact — change only the human-readable text. Leave a value [b]empty[/b] to keep the original (English) text for that entry.
 
 [h2]Scope & compatibility[/h2]
 [list]
 [*]Works with mods that ship a standard localization folder — most well-made content mods (e.g. custom characters).
-[*]Mods that hardcode text, register it at runtime, or load their own localization outside the game's system are listed as [i]unsupported[/i] — tap the unsupported entry in the mod list to see each mod and the exact reason.
-[*]Even mods that ship no English ([i]eng[/i]) table work, as long as they use the standard localization folder — the richest language they do ship becomes the reference to translate from.
+[*]Mods that hardcode text, register it at runtime, or load their own localization outside the game's system are listed as [i]unsupported[/i] — tap the entry to see each mod and the exact reason.
+[*]Even mods that ship no English ([i]eng[/i]) table work — the richest language they do ship becomes the reference to translate from.
 [*][b]No load-order requirement[/b] — translations are always applied last automatically.
 [/list]
 

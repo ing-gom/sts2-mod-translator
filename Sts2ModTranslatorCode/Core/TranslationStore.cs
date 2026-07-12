@@ -470,6 +470,44 @@ public static class TranslationStore
         catch { /* best-effort */ }
     }
 
+    /// <summary>팩 빌더에서 마지막으로 체크한 대상 모드 id 목록(세션 간 유지). 없으면 빈 목록.</summary>
+    public static List<string> LoadPackSelection()
+    {
+        try
+        {
+            string p = ReadPath(Path.Combine(Root, "pack_selection" + DataExt));
+            if (!File.Exists(p)) return new();
+            return JsonSerializer.Deserialize<List<string>>(File.ReadAllText(p, Encoding.UTF8)) ?? new();
+        }
+        catch { return new(); }
+    }
+
+    /// <summary>팩 빌더 체크 상태를 저장(다음 세션에 복원). 로컬 전용 — 내보내는 팩에는 포함되지 않는다.</summary>
+    public static void SavePackSelection(IEnumerable<string> ids)
+    {
+        try { WriteRaw(Path.Combine(Root, "pack_selection" + DataExt),
+            JsonSerializer.Serialize(ids.ToList(), WriteOpts)); }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>마지막으로 입력한 팩 이름(세션 간 유지). 비어 있으면 "".</summary>
+    public static string LoadPackName()
+    {
+        try
+        {
+            string p = ReadPath(Path.Combine(Root, "pack_name" + DataExt));
+            return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8).Trim() : "";
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>팩 이름을 저장(다음 내보내기 기본값).</summary>
+    public static void SavePackName(string name)
+    {
+        try { WriteRaw(Path.Combine(Root, "pack_name" + DataExt), (name ?? "").Trim()); }
+        catch { /* best-effort */ }
+    }
+
     /// <summary>
     /// 자동 번역(DeepL)용 API 키. 루트에 평문 저장되며 *로컬 전용* — 내보내는 번역 모드에는
     /// 포함되지 않는다(ExportMod 는 translations\ 와 매니페스트만 쓴다). 비어 있으면 "".
@@ -509,11 +547,15 @@ public static class TranslationStore
     /// destRoot(보통 게임 mods\)에 이미 설치된 이 번역 모드의 매니페스트 version. 설치 안 됐거나
     /// 읽기 실패면 null. UI 가 "설치됨: vX" 표기 + patch 자동 증가 제안에 쓴다.
     /// </summary>
-    public static string? InstalledVersion(SupportedMod mod, string destRoot)
+    public static string? InstalledVersion(SupportedMod mod, string destRoot) =>
+        InstalledVersionById(ExportedModId(mod), destRoot);
+
+    /// <summary>destRoot 에 이미 설치된 번역 모드/팩(명시 id)의 매니페스트 version. 없거나 읽기 실패면 null.
+    /// 단일 대상(ExportedModId)·다중 팩(ExportedPackId) 양쪽에서 쓰는 공통 조회.</summary>
+    public static string? InstalledVersionById(string id, string destRoot)
     {
         try
         {
-            string id = ExportedModId(mod);
             string manifestPath = Path.Combine(destRoot, id, id + ".json");
             if (!File.Exists(manifestPath)) return null;
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
@@ -544,18 +586,29 @@ public static class TranslationStore
         return installed.Trim();
     }
 
+    /// <summary>
+    /// 대상 모드의 언어별(비어 있지 않은) override 를 (lang, tables) 목록으로 수집. 번역이 하나도
+    /// 없으면 빈 목록. ExportMod(단일)·ExportPack(다중)·팩 빌더 UI(체크박스 요약)가 공유한다.
+    /// </summary>
+    public static List<(string lang, Dictionary<string, Dictionary<string, string>> tables)> CollectLangs(
+        SupportedMod mod)
+    {
+        var langs = new List<(string lang, Dictionary<string, Dictionary<string, string>> tables)>();
+        foreach (var lang in AllOverrideLangs(mod.Id))
+        {
+            var tables = LoadNonEmptyOverrides(mod, lang);
+            if (tables.Count > 0) langs.Add((lang, tables));
+        }
+        return langs;
+    }
+
     public static (bool ok, string path, string error) ExportMod(
         SupportedMod mod, string author, string destRoot, string version)
     {
         try
         {
             // 1) 비어 있지 않은 번역을 가진 언어/테이블만 수집.
-            var langs = new List<(string lang, Dictionary<string, Dictionary<string, string>> tables)>();
-            foreach (var lang in AllOverrideLangs(mod.Id))
-            {
-                var tables = LoadNonEmptyOverrides(mod, lang);
-                if (tables.Count > 0) langs.Add((lang, tables));
-            }
+            var langs = CollectLangs(mod);
             if (langs.Count == 0)
                 return (false, "", "내보낼 번역이 없습니다 — 먼저 한 항목 이상 번역하세요.");
 
@@ -605,6 +658,159 @@ public static class TranslationStore
         catch (Exception ex)
         {
             return (false, "", ex.Message);
+        }
+    }
+
+    /// <summary>번들 팩 폴더/매니페스트 id 접미사(복수형 — 단일 대상 내보내기의 "_Translation" 과 구별).</summary>
+    public const string PackSuffix = "_Translations";
+
+    /// <summary>사용자가 입력한 팩 이름 → 매니페스트/폴더 id. 복수형 접미사 "_Translations" 를 붙인다
+    /// (단일 대상 내보내기의 "_Translation" 과 구별). 예: "My Korean Pack" → "My_Korean_Pack_Translations".</summary>
+    public static string ExportedPackId(string packName) => Sanitize(packName) + PackSuffix;
+
+    /// <summary>게임 mods\ 에 이미 설치된 번들 팩 한 개(프리셋으로 되불러오기용).</summary>
+    public sealed class InstalledPack
+    {
+        public string PackId = "";              // 폴더/매니페스트 id ("...【_Translations")
+        public string Name = "";                // 매니페스트 name(사용자가 지은 팩 이름)
+        public string Version = "";             // 매니페스트 version("" 가능)
+        public List<string> TargetIds = new();  // translations\{id}\ 하위 대상 모드 id 들
+    }
+
+    /// <summary>
+    /// destRoot(게임 mods\)에 설치된 번들 팩(폴더명이 <see cref="PackSuffix"/> 로 끝나고 translations\ 를
+    /// 가진 것)을 모두 찾아 프리셋 후보로 돌려준다. 각 팩의 대상 모드 id 는 translations\ 하위 폴더에서 역산.
+    /// 이 팩들이 곧 "이전에 배포한 팩" 프리셋 — 별도 저장 파일 없이 설치 폴더 자체를 출처로 쓴다.
+    /// </summary>
+    public static List<InstalledPack> DiscoverInstalledPacks(string? modsDir)
+    {
+        var result = new List<InstalledPack>();
+        try
+        {
+            if (string.IsNullOrEmpty(modsDir) || !Directory.Exists(modsDir)) return result;
+            foreach (var dir in Directory.GetDirectories(modsDir))
+            {
+                string id = Path.GetFileName(dir);
+                if (string.IsNullOrEmpty(id) || !id.EndsWith(PackSuffix, StringComparison.Ordinal)) continue;
+                string trRoot = Path.Combine(dir, BundledTranslationScanner.FolderName);
+                if (!Directory.Exists(trRoot)) continue;
+
+                var pack = new InstalledPack { PackId = id, Name = id };
+                try
+                {
+                    string mf = Path.Combine(dir, id + ".json");
+                    if (File.Exists(mf))
+                    {
+                        var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+                            File.ReadAllText(mf, Encoding.UTF8));
+                        if (doc != null)
+                        {
+                            if (doc.TryGetValue("name", out var n) && n.ValueKind == JsonValueKind.String)
+                                pack.Name = (n.GetString() ?? id).Trim();
+                            if (doc.TryGetValue("version", out var v) && v.ValueKind == JsonValueKind.String)
+                                pack.Version = (v.GetString() ?? "").Trim();
+                        }
+                    }
+                }
+                catch { /* 매니페스트 없거나 파싱 실패 — 폴더 id 를 이름으로 */ }
+
+                try
+                {
+                    foreach (var td in Directory.GetDirectories(trRoot))
+                    {
+                        string tid = Path.GetFileName(td);
+                        if (!string.IsNullOrEmpty(tid)) pack.TargetIds.Add(tid);
+                    }
+                }
+                catch { /* translations 읽기 실패 — 대상 없음 */ }
+
+                pack.TargetIds.Sort(StringComparer.Ordinal);
+                result.Add(pack);
+            }
+            result.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+        }
+        catch { /* best-effort */ }
+        return result;
+    }
+
+    /// <summary>
+    /// 여러 대상 모드의 (비어 있지 않은) 번역을 하나의 배포 가능한 "번역 팩" 으로 묶어 내보낸다.
+    /// 결과 레이아웃:
+    ///   {destRoot}/{packId}/
+    ///     {packId}.json                                   — 매니페스트(dependencies: [Sts2ModTranslator])
+    ///     translations/{대상id}/{lang}/{table}.txt        — 각 대상 모드의 번역
+    /// 소비 쪽(BundledTranslationScanner)은 이미 한 팩의 translations\ 아래 여러 {대상id} 폴더를 순회하므로
+    /// 런타임 변경 없이 그대로 적용된다.
+    /// 번역이 하나도 없는 모드는 건너뛴다(skipped 로 반환). 재-export 시 translations\ 전체를 새로 써
+    /// 체크 해제된 모드의 데이터가 남지 않게 한다.
+    /// 반환: (성공, 폴더경로, 오류, 포함된 대상 id, 건너뛴 대상 id).
+    /// </summary>
+    public static (bool ok, string path, string error, List<string> included, List<string> skipped) ExportPack(
+        IReadOnlyList<SupportedMod> mods, string packId, string packName, string author,
+        string destRoot, string version)
+    {
+        var included = new List<string>();
+        var skipped = new List<string>();
+        try
+        {
+            if (mods == null || mods.Count == 0)
+                return (false, "", "묶을 모드를 하나 이상 선택하세요.", included, skipped);
+            if (string.IsNullOrWhiteSpace(packId))
+                return (false, "", "팩 이름을 입력하세요.", included, skipped);
+
+            string ver = string.IsNullOrWhiteSpace(version) ? "1.0.0" : version.Trim();
+            string modDir = Path.Combine(destRoot, packId);
+            // 재-export: translations\ 전체를 지우고 새로 쓴다(체크 해제한 모드 데이터 제거).
+            string trRoot = Path.Combine(modDir, BundledTranslationScanner.FolderName);
+            if (Directory.Exists(trRoot)) Directory.Delete(trRoot, recursive: true);
+
+            var allLangCodes = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var mod in mods)
+            {
+                var langs = CollectLangs(mod);
+                if (langs.Count == 0) { skipped.Add(mod.Id); continue; }
+                included.Add(mod.Id);
+                foreach (var (lang, tables) in langs)
+                {
+                    allLangCodes.Add(lang);
+                    foreach (var (table, dict) in tables)
+                    {
+                        var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
+                        foreach (var kv in dict) sorted[kv.Key] = kv.Value;
+                        // 번역 데이터는 .txt 로 — 설치 시 ModManager 의 'missing id' 로그 회피.
+                        WriteJson(Path.Combine(trRoot, mod.Id, lang, table + DataExt), sorted);
+                    }
+                }
+            }
+
+            if (included.Count == 0)
+                return (false, "",
+                    "선택한 모드에 내보낼 번역이 없습니다 — 먼저 한 항목 이상 번역하세요.", included, skipped);
+
+            var names = mods.Where(m => included.Contains(m.Id)).Select(m => m.Name).ToList();
+            var manifest = new
+            {
+                id = packId,
+                name = string.IsNullOrWhiteSpace(packName) ? packId : packName.Trim(),
+                author = author ?? "",
+                description =
+                    $"Translation pack for {included.Count} mod(s): {string.Join(", ", names)} "
+                    + $"[{string.Join(", ", allLangCodes)}]. "
+                    + "Requires the STS2 Mod Translator mod to apply.",
+                version = ver,
+                has_pck = false,
+                has_dll = false,
+                dependencies = new[] { new { id = MainFile.ModId, min_version = "1.3.0" } },
+                affects_gameplay = false,
+            };
+            WriteRaw(Path.Combine(modDir, packId + ".json"),
+                JsonSerializer.Serialize(manifest, WriteOpts));
+
+            return (true, modDir, "", included, skipped);
+        }
+        catch (Exception ex)
+        {
+            return (false, "", ex.Message, included, skipped);
         }
     }
 

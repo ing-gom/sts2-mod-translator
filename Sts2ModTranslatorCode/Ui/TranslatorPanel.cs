@@ -24,7 +24,7 @@ public static class TranslatorPanel
     private static readonly Color GRAY = new(0.60f, 0.63f, 0.72f);
     private static readonly Color RED = new(0.92f, 0.45f, 0.45f);
 
-    private enum View { Mods, Languages, Files, Editor, Unsupported }
+    private enum View { Mods, Languages, Files, Editor, Unsupported, ExportPack }
 
     private static Control? _root;
     private static Label? _title;
@@ -170,6 +170,7 @@ public static class TranslatorPanel
                 View.Files => $"{_mod?.Name}  /  {_lang}",
                 View.Editor => $"{_mod?.Name}  /  {_lang}  /  {_table}.json",
                 View.Unsupported => "Unsupported mods",
+                View.ExportPack => "Bundle a translation pack",
                 _ => "STS2 Mod Translator",
             };
         RebuildContent();
@@ -183,6 +184,7 @@ public static class TranslatorPanel
             case View.Files: Navigate(View.Languages); break;
             case View.Editor: Navigate(View.Files); break;
             case View.Unsupported: Navigate(View.Mods); break;
+            case View.ExportPack: Navigate(View.Mods); break;
         }
     }
 
@@ -200,6 +202,7 @@ public static class TranslatorPanel
             case View.Files: BuildFiles(); break;
             case View.Editor: BuildEditor(); break;
             case View.Unsupported: BuildUnsupported(); break;
+            case View.ExportPack: BuildExportPack(); break;
         }
     }
 
@@ -242,7 +245,11 @@ public static class TranslatorPanel
         dk.CustomMinimumSize = new Vector2(150, 40);
         dk.TooltipText = "Set the DeepL API key used by the editor's Auto-fill button.";
         dk.Pressed += () => PromptApiKey(() => { if (_view == View.Mods) RebuildContent(); });
-        footer.AddChild(of); footer.AddChild(rl); footer.AddChild(dk);
+        var pk = ActionButton("Bundle pack…");
+        pk.CustomMinimumSize = new Vector2(160, 40);
+        pk.TooltipText = "Bundle several mods' translations into one shareable translation pack.";
+        pk.Pressed += () => Navigate(View.ExportPack);
+        footer.AddChild(of); footer.AddChild(rl); footer.AddChild(dk); footer.AddChild(pk);
         _content!.AddChild(footer);
     }
 
@@ -368,6 +375,11 @@ public static class TranslatorPanel
     private static LineEdit? _authorEdit;
     private static LineEdit? _versionEdit;
 
+    // 팩 빌더 상태(다중 모드 선택). 세션 간 유지 — 최초 진입 때 디스크에서 복원.
+    private static readonly HashSet<string> _packSelected = new(StringComparer.Ordinal);
+    private static bool _packLoaded;
+    private static LineEdit? _packNameEdit;
+
     /// <summary>author 입력칸 값을 읽어 저장하고 반환(다음 내보내기에 재사용).</summary>
     private static string CurrentAuthor()
     {
@@ -395,6 +407,226 @@ public static class TranslatorPanel
             true, false);
         try { OS.ShellShowInFileManager(path); }
         catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] install open 실패: {ex.Message}"); }
+    }
+
+    // ── 뷰: 팩 빌더(여러 모드를 하나의 번역 팩으로) ─────────────
+    private static void BuildExportPack()
+    {
+        var scan = TranslationSync.CurrentScan;
+        if (scan == null) { _content!.AddChild(Lbl("No mods scanned yet.", GRAY)); return; }
+
+        // 최초 진입 시 저장된 선택을 복원(세션 간 유지).
+        if (!_packLoaded)
+        {
+            _packSelected.Clear();
+            foreach (var id in TranslationStore.LoadPackSelection()) _packSelected.Add(id);
+            _packLoaded = true;
+        }
+
+        _content!.AddChild(Lbl(
+            "Bundle several mods' translations into one shareable pack. Tick the mods to include, "
+            + "name the pack, then Install. Only mods you've translated (≥1 entry) can be ticked.", GRAY));
+
+        // 이전에 배포한 번들 팩을 프리셋으로 되불러오기 — 설치된 *_Translations 폴더에서 대상 목록 역산.
+        // 선택하면 이름·체크·버전(+1 제안)이 채워져 그대로 "Update installed pack" 가능.
+        string? presetModsDir = TranslationStore.GameModsDir;
+        var installedPacks = TranslationStore.DiscoverInstalledPacks(presetModsDir);
+        if (installedPacks.Count > 0)
+        {
+            var presetRow = new HBoxContainer();
+            presetRow.AddChild(Lbl("Existing packs:", GRAY));
+            var opt = new OptionButton { CustomMinimumSize = new Vector2(360, 36) };
+            opt.AddThemeFontSizeOverride("font_size", 16);
+            opt.AddItem("Load a pack you've deployed…", 0);   // placeholder(index 0)
+            for (int i = 0; i < installedPacks.Count; i++)
+            {
+                var p = installedPacks[i];
+                string vtag = string.IsNullOrEmpty(p.Version) ? "" : $" v{p.Version}";
+                opt.AddItem($"{p.Name}{vtag}  ({p.TargetIds.Count} mods)", i + 1);
+            }
+            opt.Select(0);
+            opt.ItemSelected += (long idx) => LoadPackPreset(installedPacks, (int)idx);
+            presetRow.AddChild(opt);
+            _content!.AddChild(presetRow);
+        }
+
+        // 지원 모드 = 체크박스 + 번역 요약(키 수 / 언어). 번역 없는 모드는 회색 비활성.
+        var list = ScrollList();
+        var vb = ListVBox(list);
+        int selectable = 0;
+        foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
+        {
+            var mod = m;
+            var langs = TranslationStore.CollectLangs(mod);
+            int keys = langs.Sum(l => l.tables.Values.Sum(d => d.Count));
+            bool hasTr = keys > 0;
+            if (hasTr) selectable++;
+            else _packSelected.Remove(mod.Id); // 더 이상 번역 없는 모드는 선택에서 정리
+
+            var cb = new CheckBox
+            {
+                Text = hasTr
+                    ? $"{mod.Name}    ({keys} keys · {string.Join(", ", langs.Select(l => l.lang))})"
+                    : $"{mod.Name}    (no translations yet)",
+                ButtonPressed = hasTr && _packSelected.Contains(mod.Id),
+                Disabled = !hasTr,
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                CustomMinimumSize = new Vector2(0, 40),
+            };
+            cb.AddThemeFontSizeOverride("font_size", 18);
+            if (!hasTr) cb.AddThemeColorOverride("font_color", GRAY);
+            cb.Toggled += (bool on) =>
+            {
+                if (on) _packSelected.Add(mod.Id); else _packSelected.Remove(mod.Id);
+                TranslationStore.SavePackSelection(_packSelected);
+            };
+            vb.AddChild(cb);
+        }
+        if (selectable == 0)
+            vb.AddChild(Lbl("You haven't translated any mod yet — translate a mod first, then come back.", GRAY));
+
+        // 하단: 팩 이름 / author / version + 설치 버튼.
+        var box = new VBoxContainer();
+
+        var nameRow = new HBoxContainer();
+        nameRow.AddChild(Lbl("Pack name:", GRAY));
+        _packNameEdit = new LineEdit
+        {
+            Text = TranslationStore.LoadPackName(),
+            PlaceholderText = "e.g. My Korean Pack (required)",
+            CustomMinimumSize = new Vector2(320, 36),
+        };
+        nameRow.AddChild(_packNameEdit);
+        box.AddChild(nameRow);
+
+        var authorRow = new HBoxContainer();
+        authorRow.AddChild(Lbl("Author:", GRAY));
+        _authorEdit = new LineEdit
+        {
+            Text = TranslationStore.LoadAuthor(),
+            PlaceholderText = "your name (becomes the pack's author)",
+            CustomMinimumSize = new Vector2(320, 36),
+        };
+        authorRow.AddChild(_authorEdit);
+        box.AddChild(authorRow);
+
+        // 이미 설치된 같은-이름 팩이 있으면 버전을 표기하고 patch 한 칸 올린 값을 제안.
+        string? modsDir = TranslationStore.GameModsDir;
+        string curName = _packNameEdit.Text.Trim();
+        string? installedVer = (modsDir == null || string.IsNullOrEmpty(curName))
+            ? null
+            : TranslationStore.InstalledVersionById(TranslationStore.ExportedPackId(curName), modsDir);
+        var versionRow = new HBoxContainer();
+        versionRow.AddChild(Lbl("Version:", GRAY));
+        _versionEdit = new LineEdit
+        {
+            Text = TranslationStore.NextVersion(installedVer),
+            PlaceholderText = "1.0.0",
+            CustomMinimumSize = new Vector2(140, 36),
+        };
+        versionRow.AddChild(_versionEdit);
+        if (installedVer != null)
+            versionRow.AddChild(Lbl($"installed: v{installedVer}", GOLD));
+        box.AddChild(versionRow);
+
+        var footer = new HBoxContainer();
+        var install = ActionButton(installedVer != null ? "Update installed pack" : "Install pack to mods");
+        install.CustomMinimumSize = new Vector2(220, 40);
+        install.Pressed += InstallPackToGameMods;
+        footer.AddChild(install);
+        // 초기화 — 체크·이름을 모두 비운다(디스크의 설치된 팩은 건드리지 않음).
+        var reset = ActionButton("Reset");
+        reset.CustomMinimumSize = new Vector2(120, 40);
+        reset.TooltipText = "Clear all ticks and the pack name. Does not delete any installed pack.";
+        reset.Pressed += ResetPackBuilder;
+        footer.AddChild(reset);
+        box.AddChild(footer);
+
+        box.AddChild(Lbl(
+            "Creates one standalone translation mod containing every ticked mod's translations. "
+            + "Restart to load & test it, then upload it to the Workshop (add an image.png thumbnail there).",
+            GRAY));
+        _content!.AddChild(box);
+    }
+
+    // 선택한 모드들을 하나의 팩으로 게임 mods\ 에 내보낸다(즉시 설치본 + 워크샵 업로드 입력).
+    private static void InstallPackToGameMods()
+    {
+        string? mods = TranslationStore.GameModsDir;
+        if (string.IsNullOrEmpty(mods))
+        {
+            SetStatus("Could not locate the game's mods folder.", true, true);
+            return;
+        }
+        if (_packSelected.Count == 0)
+        {
+            SetStatus("Tick at least one mod to bundle.", true, true);
+            return;
+        }
+        string packName = (_packNameEdit?.Text ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(packName))
+        {
+            SetStatus("Enter a pack name first.", true, true);
+            return;
+        }
+
+        TranslationStore.SavePackName(packName);
+        string packId = TranslationStore.ExportedPackId(packName);
+        var scan = TranslationSync.CurrentScan;
+        var selMods = scan?.Supported.Where(m => _packSelected.Contains(m.Id)).ToList()
+                      ?? new List<SupportedMod>();
+
+        var (ok, path, err, included, skipped) =
+            TranslationStore.ExportPack(selMods, packId, packName, CurrentAuthor(), mods, CurrentVersion());
+        if (!ok) { SetStatus("Install failed: " + err, true, true); return; }
+
+        string ver = CurrentVersion();
+        string msg = $"Installed \"{packName}\" v{(ver.Length == 0 ? "1.0.0" : ver)} "
+                   + $"({included.Count} mod(s)) -> {path}.  Restart the game to load it.";
+        if (skipped.Count > 0) msg += $"  Skipped {skipped.Count} with no translations.";
+        SetStatus(msg, true, false);
+        try { OS.ShellShowInFileManager(path); }
+        catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] pack install open 실패: {ex.Message}"); }
+    }
+
+    // 팩 빌더 초기화 — 체크·이름을 비운다. 설치된 팩 폴더는 삭제하지 않음(순수 UI 리셋).
+    private static void ResetPackBuilder()
+    {
+        _packSelected.Clear();
+        _packLoaded = true;                       // 재빌드 시 빈 선택 유지(디스크 재로드 방지)
+        TranslationStore.SavePackSelection(_packSelected);
+        TranslationStore.SavePackName("");
+        RebuildContent();
+        SetStatus("Cleared — pick mods and a name to build a new pack. (Installed packs are untouched.)",
+            true, false);
+    }
+
+    // 이전에 배포한 팩을 프리셋으로 되불러온다: 대상 모드 체크 + 이름 채움 + 버전 자동 +1 제안.
+    // idx 0 = 플레이스홀더(무시). 현재 번역 가능(로드+번역됨)한 대상만 체크되며, 나머지는 안내로만 표기.
+    private static void LoadPackPreset(List<TranslationStore.InstalledPack> packs, int idx)
+    {
+        if (idx <= 0 || idx > packs.Count) return;
+        var p = packs[idx - 1];
+
+        var scan = TranslationSync.CurrentScan;
+        var supported = scan?.Supported.Select(m => m.Id).ToHashSet(StringComparer.Ordinal)
+                        ?? new HashSet<string>(StringComparer.Ordinal);
+
+        _packSelected.Clear();
+        foreach (var tid in p.TargetIds) _packSelected.Add(tid); // 지금 없는 대상도 유지(재설치 시 filter로 제외됨)
+        _packLoaded = true;                                       // 재빌드 시 우리 선택 유지
+        TranslationStore.SavePackSelection(_packSelected);
+        TranslationStore.SavePackName(p.Name);
+
+        RebuildContent();   // 체크박스·이름·버전(+1) 재구성
+
+        int avail = p.TargetIds.Count(t => supported.Contains(t));
+        int missing = p.TargetIds.Count - avail;
+        string msg = $"Loaded \"{p.Name}\": {avail}/{p.TargetIds.Count} mods ticked.";
+        if (missing > 0)
+            msg += $"  {missing} not available right now (mod not loaded / not translated) — "
+                 + "they'll be dropped if you re-install.";
+        SetStatus(msg, true, missing > 0);
     }
 
     /// <summary>

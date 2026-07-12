@@ -52,6 +52,10 @@ You can turn your work into its own distributable mod — like other mods refere
 
 **Export from the editor:** pick a mod, then press **Export as mod**. It writes a ready-to-ship mod folder to `%APPDATA%\Sts2ModTranslator\exported\<id>_Translation\` containing a manifest and your non-empty translations for every language you've worked on. Drop that folder into `<STS2>/mods/` (or upload it to the Workshop) to share.
 
+**Bundle several mods into one pack:** on the mods list press **Bundle pack…**. Tick the mods you want to include (only mods you've translated are selectable), give the pack a **name**, and press **Install pack to mods**. It writes a single translation mod — `<name>_Translations/` — whose `translations/` folder holds every ticked mod's text side by side. Your selection and pack name are remembered between sessions; re-installing under the same name updates it (and drops any mods you unticked). This is the easy way to ship one Workshop item that translates a whole set of mods at once.
+
+**Updating a pack you already deployed:** you don't have to re-tick everything. The builder shows an **Existing packs ▾** dropdown listing every bundle pack already installed in your mods folder. Pick one and it re-ticks that pack's mods, fills in its name, and suggests the next version — then just press **Update installed pack**. (Mods that aren't currently loaded/translated show up as unavailable and would be dropped on re-install, so you're warned.)
+
 **Or author one by hand** — a translation mod needs no DLL, just data:
 
 ```
