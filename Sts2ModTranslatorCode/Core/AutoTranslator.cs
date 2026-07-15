@@ -193,52 +193,58 @@ public static class AutoTranslator
 
     // ── 번역 결과 안전성 검증 ───────────────────────────────────
 
+    private static readonly Regex PhContentRx =
+        new(@"<ph>(.*?)</ph>", RegexOptions.Compiled | RegexOptions.Singleline);
+
     /// <summary>
-    /// s 의 최상위 <c>{..}</c> 플레이스홀더(중첩 포함 통째) 목록. Mask 의 균형 스캔과 동일 규칙.
-    /// 닫히지 않은 중괄호를 만나면 그 지점부터는 플레이스홀더로 세지 않는다(문법 검증이 따로 잡음).
+    /// 한 문자열의 '보존 대상 토큰' 시그니처(순서 무관 멀티셋). 번역 파이프라인과 동일한
+    /// <see cref="Mask"/> 토크나이저를 그대로 재사용하므로 규칙 드리프트가 없다:
+    ///   · ph 토큰 = 중괄호 변수 <c>{..}</c> · <c>!Var!</c> 실행 변수 · <c>[img]/[sprite]/[icon]</c>
+    ///     데이터 태그 · 단독 <c>[..]</c>/<c>&lt;..&gt;</c> 토큰 · 선두 BaseLib <c>#</c> 마커.
+    ///   · tag = 짝 태그(<c>[gold]</c>/<c>[color=x]</c>/<c>&lt;b&gt;</c> 등)의 여는 마커.
+    /// 반환 두 멀티셋을 원문·결과에서 비교하면 토큰 유실/발명/중복을 한 번에 검출한다.
     /// </summary>
-    private static List<string> BracePlaceholders(string s)
+    private static (Dictionary<string, int> phs, Dictionary<string, int> tags) TokenSignature(string s)
     {
-        var list = new List<string>();
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] != '{') continue;
-            int depth = 0, j = i;
-            for (; j < s.Length; j++)
-            {
-                if (s[j] == '{') depth++;
-                else if (s[j] == '}' && --depth == 0) { j++; break; }
-            }
-            if (depth != 0) break;
-            list.Add(s.Substring(i, j - i));
-            i = j - 1;
-        }
-        return list;
+        var masked = Mask(s);
+        var phs = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (Match mt in PhContentRx.Matches(masked.Xml))
+            Bump(phs, mt.Groups[1].Value);
+        var tags = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var p in masked.Pairs) Bump(tags, p.open);
+        return (phs, tags);
+    }
+
+    private static void Bump(Dictionary<string, int> m, string k) => m[k] = m.GetValueOrDefault(k) + 1;
+
+    private static bool SameMultiset(Dictionary<string, int> a, Dictionary<string, int> b)
+    {
+        if (a.Count != b.Count) return false;
+        foreach (var (k, c) in a)
+            if (b.GetValueOrDefault(k) != c) return false;
+        return true;
     }
 
     /// <summary>
-    /// DeepL 결과가 게임에 넣어도 안전한지 검증. 기준은 주입 게이트와 동일(SimpleLoc 변환 후
-    /// LocValidator) + 플레이스홀더 보존 검사:
-    ///   · 문법: 결과가 SmartFormat 파싱을 통과해야 함(깨진 항목은 렌더링마다 예외 → 렉).
-    ///   · 보존: 원문의 {..} 플레이스홀더가 개수까지 그대로 있어야 함(유실 = 수치 빠진 설명,
-    ///     발명 = 런타임 미지 변수 예외 — 문법은 유효해서 LocValidator 로는 안 잡힌다).
+    /// DeepL 결과가 게임에 넣어도 안전한지 검증. 두 축:
+    ///   · 문법: SimpleLoc 변환 후 결과가 SmartFormat 파싱을 통과해야 함(주입 게이트와 동일 기준 —
+    ///     깨진 항목은 렌더링마다 예외/크래시 → 렉).
+    ///   · 토큰 보존: 원문의 모든 보존 대상 토큰(중괄호 변수·<c>!Var!</c>·데이터 태그·하이라이트
+    ///     짝태그·<c>#</c> 마커)이 개수까지 그대로 있어야 함. 유실=수치/아이콘/색 빠진 설명,
+    ///     발명=런타임 미지 변수 예외(문법은 유효해 LocValidator 로는 안 잡힘). 순서 무관이라
+    ///     DeepL 의 정상 어순 재배열은 통과한다.
     /// 원문 자체가 깨진 값이면 결과에 같은 기준을 강요하지 않는다(주입 게이트가 어차피 거른다).
     /// </summary>
-    private static bool IsSafeResult(string source, string result)
+    internal static bool IsSafeResult(string source, string result)
     {
-        string src = SimpleLocCompat.Apply(source), res = SimpleLocCompat.Apply(result);
-        if (!TranslationSync.TryValidateFormat(src, out _)) return true; // 원문부터 깨짐 — 비교 무의미
-        if (!TranslationSync.TryValidateFormat(res, out _)) return false;
+        if (!TranslationSync.TryValidateFormat(SimpleLocCompat.Apply(source), out _))
+            return true; // 원문부터 깨짐 — 비교 무의미
+        if (!TranslationSync.TryValidateFormat(SimpleLocCompat.Apply(result), out _))
+            return false;
 
-        var srcCount = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var p in BracePlaceholders(src)) srcCount[p] = srcCount.GetValueOrDefault(p) + 1;
-        var resCount = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var p in BracePlaceholders(res)) resCount[p] = resCount.GetValueOrDefault(p) + 1;
-
-        if (srcCount.Count != resCount.Count) return false;
-        foreach (var (p, c) in srcCount)
-            if (resCount.GetValueOrDefault(p) != c) return false;
-        return true;
+        var (srcPh, srcTag) = TokenSignature(source);
+        var (resPh, resTag) = TokenSignature(result);
+        return SameMultiset(srcPh, resPh) && SameMultiset(srcTag, resTag);
     }
 
     /// <summary>

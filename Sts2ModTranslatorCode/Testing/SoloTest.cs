@@ -111,6 +111,29 @@ internal static class SoloTest
             Assert(badKeys.Count == 1 && badKeys[0] == "B",
                 "InvalidFormatKeys flags exactly the broken key");
 
+            // DeepL 안전검사(IsSafeResult) 토큰 보존 — DeepL API 없이 결정적으로 검증.
+            // (source, result, 기대 safe?)
+            (string src, string res, bool safe)[] cases =
+            {
+                ("Deal {Damage} damage.", "{Damage} 피해를 줍니다.", true),          // 정상
+                ("Deal {Damage} damage.", "피해를 줍니다.", false),                  // 중괄호 변수 유실
+                ("Deal {Damage} damage.", "{Damage}{Block} 피해.", false),           // 변수 발명
+                ("Gain [gold]Block[/gold].", "[gold]방어도[/gold]를 얻습니다.", true), // 하이라이트 보존
+                ("Gain [gold]Block[/gold].", "방어도를 얻습니다.", false),            // 하이라이트 태그 유실
+                ("#Deal !D! damage.", "#!D! 피해를 줍니다.", true),                   // BaseLib !Var! + # 보존
+                ("#Deal !D! damage.", "#피해를 줍니다.", false),                      // !Var! 유실
+                ("[img]res://x.png[/img] icon", "[img]res://x.png[/img] 아이콘", true), // 데이터 태그 보존
+                ("[img]res://x.png[/img] icon", "아이콘", false),                     // 데이터 태그 유실
+            };
+            int passed = 0;
+            foreach (var (cs, cr, expect) in cases)
+            {
+                bool got = AutoTranslator.IsSafeResult(cs, cr);
+                if (got == expect) passed++;
+                else W($"  IsSafeResult MISMATCH: src='{cs}' res='{cr}' expected={expect} got={got}");
+            }
+            Assert(passed == cases.Length, $"DeepL safety token-preservation cases {passed}/{cases.Length}");
+
             // 유저가 이어서 쓸 수 있게 원래 언어 복귀(어차피 비저장이지만 시각적으로도 원상복구).
             if (!string.Equals(originalLang, "kor", StringComparison.OrdinalIgnoreCase))
             {
