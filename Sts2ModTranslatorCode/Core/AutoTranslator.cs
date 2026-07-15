@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using MegaCrit.Sts2.Core.Localization;
 
 namespace Sts2ModTranslator.Core;
 
@@ -104,38 +105,41 @@ public static class AutoTranslator
     /// <summary>
     /// 편집기 JSON(<paramref name="editorJson"/>)의 빈 값을 DeepL 로 채운 새 JSON 을 만든다.
     /// 원문은 <paramref name="mod"/> 의 eng 테이블에서 가져온다. 자동 저장하지 않는다.
-    /// 반환: (성공, 새 JSON 문자열, 채운 키 수, 오류메시지).
+    /// 반환: (성공, 새 JSON 문자열, 채운 키 수, 검증 탈락 수, 오류메시지).
     /// </summary>
-    public static async Task<(bool ok, string json, int count, string error)> FillEditorAsync(
+    public static async Task<(bool ok, string json, int count, int skipped, string error)> FillEditorAsync(
         SupportedMod mod, string table, string lang, string editorJson, string apiKey)
     {
         if (string.IsNullOrWhiteSpace(apiKey))
-            return (false, editorJson, 0, "DeepL API key is not set.");
+            return (false, editorJson, 0, 0, "DeepL API key is not set.");
 
         string? target = DeepLTarget(lang);
         if (target == null)
-            return (false, editorJson, 0, $"DeepL does not support language '{lang}'.");
+            return (false, editorJson, 0, 0, $"DeepL does not support language '{lang}'.");
 
         Dictionary<string, string>? cur;
         try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(editorJson); }
-        catch (Exception ex) { return (false, editorJson, 0, "Current JSON is invalid — fix it first: " + ex.Message); }
-        if (cur == null) return (false, editorJson, 0, "Current JSON top-level is not an object.");
+        catch (Exception ex) { return (false, editorJson, 0, 0, "Current JSON is invalid — fix it first: " + ex.Message); }
+        if (cur == null) return (false, editorJson, 0, 0, "Current JSON top-level is not an object.");
 
         var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
         string? source = SourceCode(mod.SourceLang);
 
         try
         {
-            var (n, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
-            if (err.Length > 0) return (false, editorJson, 0, err);
-            if (n == 0)
-                return (false, editorJson, 0,
+            var (n, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
+            if (err.Length > 0) return (false, editorJson, 0, 0, err);
+            if (n == 0 && skipped == 0)
+                return (false, editorJson, 0, 0,
                     "Nothing to fill — every key is already translated (or has no source text).");
-            return (true, TranslationStore.ToPrettyJson(cur), n, "");
+            if (n == 0)
+                return (false, editorJson, 0, skipped,
+                    $"All {skipped} DeepL result(s) failed the {{format}} safety check — translate them by hand.");
+            return (true, TranslationStore.ToPrettyJson(cur), n, skipped, "");
         }
         catch (Exception ex)
         {
-            return (false, editorJson, 0, ex.Message);
+            return (false, editorJson, 0, 0, ex.Message);
         }
     }
 
@@ -143,18 +147,18 @@ public static class AutoTranslator
     /// 한 모드/언어의 *모든* 테이블에서 빈 항목을 DeepL 로 채워 각 override 파일에 저장한다.
     /// (편집기 검수 단계가 없으므로 디스크에 바로 쓴다 — 이후 편집기에서 개별 수정 가능.)
     /// <paramref name="progress"/>(현재순번, 총개수, 테이블명)로 진행 알림. API 오류(쿼터 등) 시 중단.
-    /// 반환: (성공, 채운 항목 수, 채운 파일 수, 경고/오류 — 부분성공이면 마지막 오류를 경고로).
+    /// 반환: (성공, 채운 항목 수, 검증 탈락 수, 채운 파일 수, 경고/오류 — 부분성공이면 마지막 오류를 경고로).
     /// </summary>
-    public static async Task<(bool ok, int filled, int files, string error)> FillAllTablesAsync(
+    public static async Task<(bool ok, int filled, int skipped, int files, string error)> FillAllTablesAsync(
         SupportedMod mod, string lang, string apiKey, Action<int, int, string>? progress)
     {
-        if (string.IsNullOrWhiteSpace(apiKey)) return (false, 0, 0, "DeepL API key is not set.");
+        if (string.IsNullOrWhiteSpace(apiKey)) return (false, 0, 0, 0, "DeepL API key is not set.");
         string? target = DeepLTarget(lang);
-        if (target == null) return (false, 0, 0, $"DeepL does not support language '{lang}'.");
+        if (target == null) return (false, 0, 0, 0, $"DeepL does not support language '{lang}'.");
         string? source = SourceCode(mod.SourceLang);
 
         var tables = mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal).ToList();
-        int total = 0, files = 0, idx = 0;
+        int total = 0, totalSkipped = 0, files = 0, idx = 0;
         string lastErr = "";
         foreach (var table in tables)
         {
@@ -169,9 +173,10 @@ public static class AutoTranslator
             int n;
             try
             {
-                var (c, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
+                var (c, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
                 if (err.Length > 0) { lastErr = err; break; } // API 오류 → 나머지 중단
                 n = c;
+                totalSkipped += skipped;
             }
             catch (Exception ex) { lastErr = ex.Message; break; }
 
@@ -182,15 +187,67 @@ public static class AutoTranslator
             }
         }
 
-        if (lastErr.Length > 0 && total == 0) return (false, 0, 0, lastErr);
-        return (true, total, files, lastErr); // 부분 성공 시 lastErr 은 경고로 전달
+        if (lastErr.Length > 0 && total == 0) return (false, 0, totalSkipped, 0, lastErr);
+        return (true, total, totalSkipped, files, lastErr); // 부분 성공 시 lastErr 은 경고로 전달
+    }
+
+    // ── 번역 결과 안전성 검증 ───────────────────────────────────
+
+    /// <summary>
+    /// s 의 최상위 <c>{..}</c> 플레이스홀더(중첩 포함 통째) 목록. Mask 의 균형 스캔과 동일 규칙.
+    /// 닫히지 않은 중괄호를 만나면 그 지점부터는 플레이스홀더로 세지 않는다(문법 검증이 따로 잡음).
+    /// </summary>
+    private static List<string> BracePlaceholders(string s)
+    {
+        var list = new List<string>();
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] != '{') continue;
+            int depth = 0, j = i;
+            for (; j < s.Length; j++)
+            {
+                if (s[j] == '{') depth++;
+                else if (s[j] == '}' && --depth == 0) { j++; break; }
+            }
+            if (depth != 0) break;
+            list.Add(s.Substring(i, j - i));
+            i = j - 1;
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// DeepL 결과가 게임에 넣어도 안전한지 검증. 기준은 주입 게이트와 동일(SimpleLoc 변환 후
+    /// LocValidator) + 플레이스홀더 보존 검사:
+    ///   · 문법: 결과가 SmartFormat 파싱을 통과해야 함(깨진 항목은 렌더링마다 예외 → 렉).
+    ///   · 보존: 원문의 {..} 플레이스홀더가 개수까지 그대로 있어야 함(유실 = 수치 빠진 설명,
+    ///     발명 = 런타임 미지 변수 예외 — 문법은 유효해서 LocValidator 로는 안 잡힌다).
+    /// 원문 자체가 깨진 값이면 결과에 같은 기준을 강요하지 않는다(주입 게이트가 어차피 거른다).
+    /// </summary>
+    private static bool IsSafeResult(string source, string result)
+    {
+        string src = SimpleLocCompat.Apply(source), res = SimpleLocCompat.Apply(result);
+        if (!LocValidator.ValidateFormatString(src, out _)) return true; // 원문부터 깨짐 — 비교 무의미
+        if (!LocValidator.ValidateFormatString(res, out _)) return false;
+
+        var srcCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var p in BracePlaceholders(src)) srcCount[p] = srcCount.GetValueOrDefault(p) + 1;
+        var resCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var p in BracePlaceholders(res)) resCount[p] = resCount.GetValueOrDefault(p) + 1;
+
+        if (srcCount.Count != resCount.Count) return false;
+        foreach (var (p, c) in srcCount)
+            if (resCount.GetValueOrDefault(p) != c) return false;
+        return true;
     }
 
     /// <summary>
     /// <paramref name="cur"/> 의 빈 값을, <paramref name="eng"/> 원문을 DeepL 번역해 채운다(in-place).
-    /// 반환: (채운 키 수, 오류메시지). 채울 게 없으면 (0, "").
+    /// 안전성 검증(IsSafeResult)에 실패한 결과는 채우지 않고 빈 값으로 남긴다(수동 번역 대상 —
+    /// 편집기의 "Next empty ▼" 로 찾을 수 있다).
+    /// 반환: (채운 키 수, 검증 탈락 수, 오류메시지). 채울 게 없으면 (0, 0, "").
     /// </summary>
-    private static async Task<(int count, string error)> FillDictAsync(
+    private static async Task<(int count, int skipped, string error)> FillDictAsync(
         Dictionary<string, string> eng, Dictionary<string, string> cur,
         string? source, string target, string stsTarget, string apiKey)
     {
@@ -200,7 +257,7 @@ public static class AutoTranslator
                                    && !string.IsNullOrWhiteSpace(sv))
                       .Select(kv => kv.Key)
                       .ToList();
-        if (keys.Count == 0) return (0, "");
+        if (keys.Count == 0) return (0, 0, "");
 
         var masked = keys.Select(k => Mask(eng[k])).ToArray();
         var translated = new string[masked.Length];
@@ -219,14 +276,26 @@ public static class AutoTranslator
             }
             var outs = await TranslateBatch(batch, source, target, apiKey);
             if (outs.Count != batch.Count)
-                return (0, $"DeepL returned {outs.Count} results for {batch.Count} inputs.");
+                return (0, 0, $"DeepL returned {outs.Count} results for {batch.Count} inputs.");
             for (int j = 0; j < n; j++) translated[i + j] = outs[j];
             i += n;
         }
 
+        int filled = 0, skipped = 0;
         for (int k = 0; k < keys.Count; k++)
-            cur[keys[k]] = Unmask(translated[k], masked[k], stsTarget);
-        return (keys.Count, "");
+        {
+            string result = Unmask(translated[k], masked[k], stsTarget);
+            if (!IsSafeResult(eng[keys[k]], result))
+            {
+                skipped++;
+                MainFile.Logger.Warn(
+                    $"[Sts2ModTranslator] DeepL result failed the format safety check — left empty: {keys[k]}");
+                continue;
+            }
+            cur[keys[k]] = result;
+            filled++;
+        }
+        return (filled, skipped, "");
     }
 
     // ── DeepL 호출 ──────────────────────────────────────────────
@@ -298,6 +367,9 @@ public static class AutoTranslator
     {
         var m = new Masked();
         var sb = new StringBuilder(s.Length + 16);
+        // BaseLib SimpleLoc opt-in 마커(맨 앞 '#')는 통째 보존. DeepL 이 문장 앞 기호를 떨어뜨리면
+        // 주입 시 SimpleLoc 변환이 안 걸려 '!Var!' 원형이 게임에 노출된다. (최상위에서만 마커.)
+        if (s.StartsWith('#')) { sb.Append("<ph>#</ph>"); s = s.Substring(1); }
         MaskInto(s, sb, m);
         m.Xml = sb.ToString();
         return m;

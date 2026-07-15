@@ -48,6 +48,7 @@ public static class TranslationSync
     /// </summary>
     public static int ReloadFromDisk()
     {
+        LastInjectInvalidCount = 0; // eng(주입 스킵) 경로에서 이전 카운트가 남지 않게
         var mgr = LocManager.Instance;
         if (mgr == null) return 0;
         var scan = EnsureScan();
@@ -195,8 +196,67 @@ public static class TranslationSync
         }
     }
 
+    // ── SmartFormat 검증 게이트 ─────────────────────────────────
+
+    /// <summary>직전 주입에서 걸러낸(문법 깨진) 항목 수. 패널 상태줄 표시용.</summary>
+    public static int LastInjectInvalidCount { get; private set; }
+
+    private const int MaxInvalidLogPerTable = 10;
+
+    /// <summary>
+    /// 주입 직전 SmartFormat 문법 검증. 게임 자체 localization_override 로더는 LocValidator 로
+    /// 깨진 항목을 걸러 적용하지 않지만, MergeWith 런타임 주입은 그 검증을 우회한다.
+    /// 깨진 포맷 문자열은 카드 설명이 그려질 때마다(파일 이동/타겟팅 호버/co-op 카드 인텐트)
+    /// SmartFormat 예외 → StackTrace 생성 + 동기 로그 + Sentry 캡처를 반복시켜 전투 중 지속
+    /// 스터터를 유발한다. 여기서 게임과 동일한 검증을 적용해 유효 항목만 통과시킨다.
+    /// dict 는 SimpleLocCompat.ApplyAll 이 만든 새 dict 만 받는다(제자리 제거 안전).
+    /// </summary>
+    private static Dictionary<string, string> FilterValidFormats(Dictionary<string, string> dict, string where)
+    {
+        List<string>? bad = null;
+        foreach (var kv in dict)
+        {
+            if (LocValidator.ValidateFormatString(kv.Value, out string? err)) continue;
+            bad ??= new List<string>();
+            bad.Add(kv.Key);
+            if (bad.Count <= MaxInvalidLogPerTable)
+                MainFile.Logger.Warn(
+                    $"[Sts2ModTranslator] invalid format — not applied: {where}/{kv.Key}: {err}");
+        }
+        if (bad == null) return dict; // 전부 유효(일반 경로) — 추가 비용 없음
+        if (bad.Count > MaxInvalidLogPerTable)
+            MainFile.Logger.Warn(
+                $"[Sts2ModTranslator] …and {bad.Count - MaxInvalidLogPerTable} more invalid entries in {where}.");
+        LastInjectInvalidCount += bad.Count;
+        foreach (var k in bad) dict.Remove(k);
+        return dict;
+    }
+
+    /// <summary>
+    /// override JSON 텍스트에서 SmartFormat 문법이 깨진 (비어 있지 않은) 값의 키 목록.
+    /// 편집기 Save/파일 목록의 즉시 경고용 — 깨진 중괄호는 JSON 으로는 유효해서
+    /// 기존 JSON 오류 경고에 잡히지 않는다. 주입 게이트와 동일하게 SimpleLoc 변환 후 검증.
+    /// JSON 자체가 깨진 텍스트는 빈 목록(기존 JSON 오류 경고가 담당).
+    /// </summary>
+    public static List<string> InvalidFormatKeys(string json)
+    {
+        var bad = new List<string>();
+        Dictionary<string, string>? d;
+        try { d = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json); }
+        catch { return bad; }
+        if (d == null) return bad;
+        foreach (var kv in d)
+        {
+            if (string.IsNullOrEmpty(kv.Value)) continue;
+            if (!LocValidator.ValidateFormatString(SimpleLocCompat.Apply(kv.Value), out _))
+                bad.Add(kv.Key);
+        }
+        return bad;
+    }
+
     private static int Inject(LocManager locMgr, ScanResult scan, string language)
     {
+        LastInjectInvalidCount = 0;
         int translated = 0;
         var supportedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in scan.Supported)
@@ -219,7 +279,8 @@ public static class TranslationSync
                 if (lt == null) continue; // 게임에 없는 테이블 — 스킵
                 // 주입 전 BaseLib SimpleLoc 저작 문법(#, !Var!, *gold*, [E] 등)을 STS2 네이티브로 변환.
                 // BaseLib 미사용 모드/일반 값은 그대로 통과(무해). → 게임에 '!Var!' 원형이 노출되던 문제 해소.
-                try { lt.MergeWith(SimpleLocCompat.ApplyAll(dict)); }
+                // 변환 후 SmartFormat 문법 검증을 통과한 항목만 주입(깨진 항목은 렌더링마다 예외 유발).
+                try { lt.MergeWith(FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{mod.Id}/{table}")); }
                 catch (Exception ex)
                 {
                     MainFile.Logger.Warn($"[Sts2ModTranslator] merge 실패 {mod.Id}/{table}: {ex.Message}");
@@ -239,8 +300,8 @@ public static class TranslationSync
                 if (dict.Count == 0) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue;
-                // 번역 팩(bundled)도 동일하게 SimpleLoc 문법을 변환해 주입(ApplyAll 이 새 dict 생성).
-                try { lt.MergeWith(SimpleLocCompat.ApplyAll(dict)); }
+                // 번역 팩(bundled)도 동일하게 SimpleLoc 문법 변환 + 검증 후 주입(ApplyAll 이 새 dict 생성).
+                try { lt.MergeWith(FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{targetId}/{table}")); }
                 catch (Exception ex)
                 {
                     MainFile.Logger.Warn($"[Sts2ModTranslator] bundled merge 실패 {targetId}/{table}: {ex.Message}");

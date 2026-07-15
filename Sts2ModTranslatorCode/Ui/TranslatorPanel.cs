@@ -240,7 +240,7 @@ public static class TranslatorPanel
         // 하단 액션
         var footer = new HBoxContainer();
         var of = ActionButton("Open Folder"); of.Pressed += OpenFolder;
-        var rl = ActionButton("Reload"); rl.Pressed += () => { int n = TranslationSync.ReloadFromDisk(); SetStatus($"Reloaded {n} keys.", true, false); };
+        var rl = ActionButton("Reload"); rl.Pressed += () => { int n = TranslationSync.ReloadFromDisk(); SetStatus(WithFormatWarning($"Reloaded {n} keys."), true, TranslationSync.LastInjectInvalidCount > 0); };
         var dk = ActionButton(TranslationStore.LoadApiKey().Length > 0 ? "DeepL key ✓" : "DeepL key…");
         dk.CustomMinimumSize = new Vector2(150, 40);
         dk.TooltipText = "Set the DeepL API key used by the editor's Auto-fill button.";
@@ -667,24 +667,29 @@ public static class TranslatorPanel
     {
         if (_mod == null) { Navigate(View.Mods); return; }
         var list = ScrollList();
-        int problems = 0;
+        int problems = 0, fmtProblems = 0;
         foreach (var table in _mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal))
         {
             var t = table;
             var (tot, tr, invalid) = TranslationStore.TableStatus(_mod, _lang, t);
             int pct = tot == 0 ? 0 : (int)Math.Round(100.0 * tr / tot);
+            // SmartFormat 문법이 깨진 값(JSON 으로는 유효 — 기존 JSON 경고에 안 잡힘) 개수.
+            int badFmt = invalid ? 0
+                : TranslationSync.InvalidFormatKeys(TranslationStore.OverrideText(_mod.Id, _lang, t)).Count;
 
             var row = new HBoxContainer();
-            // 깨진 JSON 은 빨간색 + 경고로 표시(번역 미적용 상태). 정상은 진행률만.
+            // 깨진 JSON/포맷은 빨간색 + 경고로 표시(해당 항목 번역 미적용 상태). 정상은 진행률만.
             var lbl = new Label
             {
                 Text = invalid
                     ? $"{t}.json     ⚠ JSON error — open & fix"
-                    : $"{t}.json     {pct}%  ({tr}/{tot}){(tot > tr ? $"   ◦ {tot - tr} empty" : "")}",
+                    : $"{t}.json     {pct}%  ({tr}/{tot}){(tot > tr ? $"   ◦ {tot - tr} empty" : "")}"
+                      + (badFmt > 0 ? $"   ⚠ {badFmt} bad {{format}}" : ""),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             };
-            lbl.AddThemeColorOverride("font_color", invalid ? RED : WHITE);
+            lbl.AddThemeColorOverride("font_color", invalid || badFmt > 0 ? RED : WHITE);
             if (invalid) problems++;
+            if (badFmt > 0) fmtProblems++;
             row.AddChild(lbl);
             var edit = ActionButton("Edit"); edit.Pressed += () => { _table = t; Navigate(View.Editor); };
             var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(t);
@@ -692,10 +697,17 @@ public static class TranslatorPanel
             ListVBox(list).AddChild(row);
         }
 
-        if (problems > 0)
-            SetStatus(
-                $"⚠ {problems} file(s) have invalid JSON and are NOT applied. Open each, fix the JSON, and Save.",
-                true, true);
+        if (problems > 0 || fmtProblems > 0)
+        {
+            string msg = problems > 0
+                ? $"⚠ {problems} file(s) have invalid JSON and are NOT applied. Open each, fix the JSON, and Save."
+                : "";
+            if (fmtProblems > 0)
+                msg += (msg.Length > 0 ? "  " : "")
+                    + $"⚠ {fmtProblems} file(s) contain entries with invalid {{format}} syntax "
+                    + "(unbalanced braces?) — those entries are NOT applied. Open & fix, then Save.";
+            SetStatus(msg, true, true);
+        }
 
         var footer = new HBoxContainer();
         var mod = _mod; string lang = _lang;
@@ -938,7 +950,7 @@ public static class TranslatorPanel
 
         _ = Task.Run(async () =>
         {
-            var (ok, json, n, err) = await AutoTranslator.FillEditorAsync(mod, table, lang, text, key);
+            var (ok, json, n, skipped, err) = await AutoTranslator.FillEditorAsync(mod, table, lang, text, key);
             // await 이후 연속실행은 Godot 메인 스레드가 아닐 수 있다 → 노드 접근은 CallDeferred 로 마샬.
             Callable.From(() =>
             {
@@ -953,8 +965,11 @@ public static class TranslatorPanel
                     int left = EmptyEntryLines(_editor).Count;
                     SetStatus(
                         $"Filled {n} entr{(n == 1 ? "y" : "ies")} via DeepL — review, then Save."
+                        + (skipped > 0
+                            ? $"  ({skipped} left empty: result failed the {{format}} safety check — translate by hand.)"
+                            : "")
                         + (left > 0 ? $"  ({left} still empty — use \"Next empty ▼\" to find them.)" : ""),
-                        true, false);
+                        true, skipped > 0);
                 }
                 else SetStatus($"Translated {n} entries (view changed — reopen to see).", true, false);
             }).CallDeferred();
@@ -990,7 +1005,7 @@ public static class TranslatorPanel
                 SetStatus("Auto-translating all files…", true, false);
                 _ = Task.Run(async () =>
                 {
-                    var (ok, filled, files, err) = await AutoTranslator.FillAllTablesAsync(
+                    var (ok, filled, skipped, files, err) = await AutoTranslator.FillAllTablesAsync(
                         mod, lang, key,
                         (i, n, t) => Callable.From(() =>
                             SetStatus($"Translating {i}/{n}: {t}.json…", true, false)).CallDeferred());
@@ -1001,9 +1016,12 @@ public static class TranslatorPanel
                         if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
                         TranslationSync.ReloadFromDisk();
                         string warn = err.Length > 0 ? $"  (stopped early: {err})" : "";
+                        string skip = skipped > 0
+                            ? $"  ({skipped} left empty: result failed the {{format}} safety check — translate by hand.)"
+                            : "";
                         SetStatus(
                             $"Filled {filled} entr{(filled == 1 ? "y" : "ies")} across {files} file(s) — "
-                            + $"review & edit as needed.{warn}", true, err.Length > 0);
+                            + $"review & edit as needed.{skip}{warn}", true, err.Length > 0 || skipped > 0);
                         if (_view == View.Files) RebuildContent();
                     }).CallDeferred();
                 });
@@ -1048,8 +1066,25 @@ public static class TranslatorPanel
         if (_mod == null || _editor == null) return;
         var (ok, err) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text);
         if (!ok) { SetStatus("Save failed: " + err, true, true); return; }
+        var badKeys = TranslationSync.InvalidFormatKeys(_editor.Text);
         int n = TranslationSync.ReloadFromDisk();
-        SetStatus($"Saved & applied ({n} keys active).", true, false);
+        if (badKeys.Count > 0)
+            SetStatus(
+                $"Saved ({n} keys active), but {badKeys.Count} entr{(badKeys.Count == 1 ? "y has" : "ies have")} "
+                + "invalid {format} syntax (unbalanced braces?) and were NOT applied: "
+                + string.Join(", ", badKeys.Take(3)) + (badKeys.Count > 3 ? $", +{badKeys.Count - 3} more" : ""),
+                true, true);
+        else
+            SetStatus($"Saved & applied ({n} keys active).", true, false);
+    }
+
+    /// <summary>주입에서 걸러진(문법 깨진) 항목이 있으면 상태 메시지에 경고를 덧붙인다.</summary>
+    private static string WithFormatWarning(string msg)
+    {
+        int bad = TranslationSync.LastInjectInvalidCount;
+        return bad == 0 ? msg
+            : msg + $"  ⚠ {bad} entr{(bad == 1 ? "y has" : "ies have")} invalid {{format}} syntax and "
+                  + "were NOT applied — fix them (see the log for keys).";
     }
 
     // ── 업로드 ──────────────────────────────────────────────
