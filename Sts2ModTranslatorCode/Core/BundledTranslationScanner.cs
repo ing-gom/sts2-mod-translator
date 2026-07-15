@@ -39,6 +39,20 @@ public sealed class BundledTranslations
     /// <summary>감지된 번역 모드 목록(리포트/UI 표시용).</summary>
     public List<TranslationProvider> Providers = new();
 
+    /// <summary>대상모드 id → 그 대상을 번역할 때 기준이 됐던 대상 모드 버전(팩이 동봉). 없으면 미기재.</summary>
+    public Dictionary<string, string> SourceVersionByTarget = new(StringComparer.Ordinal);
+
+    /// <summary>설치된 팩이 이 대상에 대해 기록한 "번역 기준 버전". 없으면 null. (여러 팩이면 선적재 우선.)</summary>
+    public string? SourceVersionForTarget(string targetId) =>
+        SourceVersionByTarget.TryGetValue(targetId, out var v) && !string.IsNullOrEmpty(v) ? v : null;
+
+    /// <summary>대상별 번역 기준 버전을 기록(선적재 우선 — 이미 있으면 유지).</summary>
+    internal void SetSourceVersion(string targetId, string version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return;
+        if (!SourceVersionByTarget.ContainsKey(targetId)) SourceVersionByTarget[targetId] = version.Trim();
+    }
+
     public bool Any => Providers.Count > 0;
 
     /// <summary>해당 대상모드를 번역하는 번역 모드가 하나라도 있으면 true.</summary>
@@ -152,6 +166,13 @@ public static class BundledTranslationScanner
         foreach (string tdir in SafeDirsFs(root))
         {
             string targetId = Path.GetFileName(tdir);
+            // 대상별 "번역 기준 버전"(언어 폴더가 아니라 대상 폴더 바로 아래 파일).
+            try
+            {
+                string vf = Path.Combine(tdir, TranslationStore.SourceVersionFile);
+                if (File.Exists(vf)) agg.SetSourceVersion(targetId, File.ReadAllText(vf).Trim());
+            }
+            catch { /* 버전 파일 없거나 읽기 실패 — 싱크 표시만 생략 */ }
             foreach (string ldir in SafeDirsFs(tdir))
             {
                 string lang = Path.GetFileName(ldir);
@@ -191,6 +212,17 @@ public static class BundledTranslationScanner
         foreach (string targetId in ModLocScanner.SafeDirs(root))
         {
             string tdir = $"{root}/{targetId}";
+            // 대상별 "번역 기준 버전"(PCK 동봉 팩 대비 res:// 경로).
+            string vres = $"{tdir}/{TranslationStore.SourceVersionFile}";
+            if (Godot.FileAccess.FileExists(vres))
+            {
+                try
+                {
+                    using var vf = Godot.FileAccess.Open(vres, Godot.FileAccess.ModeFlags.Read);
+                    if (vf != null) agg.SetSourceVersion(targetId, vf.GetAsText().Trim());
+                }
+                catch { /* 읽기 실패 — 싱크 표시만 생략 */ }
+            }
             foreach (string lang in ModLocScanner.SafeDirs(tdir))
             {
                 string ldir = $"{tdir}/{lang}";

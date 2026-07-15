@@ -213,16 +213,24 @@ public static class TranslatorPanel
         if (scan == null) { _content!.AddChild(Lbl("No mods scanned yet.", GRAY)); return; }
 
         var list = ScrollList();
+        int outdated = 0;
         foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
         {
             var mod = m;
             // 설치된 번역 모드가 이 대상을 번역 중이면 언어별 커버리지(%)를 표시(런타임 자동 적용).
             string pack = PackTagForTarget(scan, m.Id);
-            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{pack}");
-            if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
+            // 대상 모드가 번역 이후 업데이트됐으면 싱크 경고(내 번역 / 설치된 팩 각각).
+            string sync = SyncTag(scan, m);
+            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{pack}{sync}");
+            if (sync.Length > 0) { b.AddThemeColorOverride("font_color", RED); outdated++; }
+            else if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
             b.Pressed += () => { _mod = mod; Navigate(View.Languages); };
             ListVBox(list).AddChild(b);
         }
+        if (outdated > 0)
+            ListVBox(list).AddChild(Lbl(
+                $"⚠ {outdated} mod(s) were updated after translating — their translations may be out of date. "
+                + "Open a mod to review; re-translate changed strings, then re-export the pack.", RED));
 
         // 설치된 팩은 위 대상 행의 'pack: 언어 %' 태그로 표시. 내용은 모드 ▸ Edit 의 Reference 에서 본다.
         if (scan.Bundled.Any)
@@ -662,6 +670,28 @@ public static class TranslatorPanel
         return langs.Count == 0 ? "" : "   ◆ pack: " + string.Join(", ", langs.Select(l => LangPct(scan, targetId, l)));
     }
 
+    /// <summary>
+    /// 대상 모드가 번역 이후 업데이트됐음을 알리는 태그. 두 출처를 각각 본다:
+    ///   · 내 로컬 번역: 마지막 번역 시점 기록 버전 vs 현재 모드 버전.
+    ///   · 설치된 번역 팩: 팩이 동봉한 기준 버전 vs 현재 모드 버전.
+    /// 버전이 다르면 경고. 현재 버전이 비어 있으면(버전 미상) 판단 불가 → 표시 안 함. 없으면 "".
+    /// </summary>
+    internal static string SyncTag(ScanResult scan, SupportedMod m)
+    {
+        if (string.IsNullOrEmpty(m.Version)) return ""; // 대상 모드에 버전 정보 없음 — 판단 불가
+        var parts = new System.Collections.Generic.List<string>();
+
+        string? rec = TranslationStore.GetRecordedTargetVersion(m.Id);
+        if (rec != null && !TranslationStore.SameVersion(rec, m.Version))
+            parts.Add($"translated for v{rec}, mod now v{m.Version}");
+
+        string? packVer = scan.Bundled.SourceVersionForTarget(m.Id);
+        if (packVer != null && !TranslationStore.SameVersion(packVer, m.Version))
+            parts.Add($"pack for v{packVer}, mod now v{m.Version}");
+
+        return parts.Count == 0 ? "" : "   ⚠ out of sync (" + string.Join("; ", parts) + ")";
+    }
+
     // ── 뷰: 파일(테이블) 목록 ───────────────────────────────
     private static void BuildFiles()
     {
@@ -958,6 +988,7 @@ public static class TranslatorPanel
                 if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
                 // 사용자가 그새 다른 뷰로 이동했으면 편집기에 쓰지 않는다.
                 if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                TranslationStore.RecordTargetVersion(mod.Id, mod.Version); // 번역 기준 버전 기록
                 if (_view == View.Editor && _editor != null && GodotObject.IsInstanceValid(_editor))
                 {
                     _editor.Text = json;
@@ -1014,6 +1045,7 @@ public static class TranslatorPanel
                         _autoBusy = false;
                         if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
                         if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                        TranslationStore.RecordTargetVersion(mod.Id, mod.Version); // 번역 기준 버전 기록
                         TranslationSync.ReloadFromDisk();
                         string warn = err.Length > 0 ? $"  (stopped early: {err})" : "";
                         string skip = skipped > 0
@@ -1066,6 +1098,8 @@ public static class TranslatorPanel
         if (_mod == null || _editor == null) return;
         var (ok, err) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text);
         if (!ok) { SetStatus("Save failed: " + err, true, true); return; }
+        // 이 대상 모드를 "지금 버전 기준으로 번역했다"고 기록(이후 모드 업데이트 시 싱크 경고 기준).
+        TranslationStore.RecordTargetVersion(_mod.Id, _mod.Version);
         var badKeys = TranslationSync.InvalidFormatKeys(_editor.Text);
         int n = TranslationSync.ReloadFromDisk();
         if (badKeys.Count > 0)
@@ -1099,11 +1133,15 @@ public static class TranslatorPanel
             CurrentDir = TranslationStore.Root,
         };
         dlg.AddFilter("*.json", "JSON");
-        string mid = _mod.Id, lang = _lang, t = table;
+        string mid = _mod.Id, lang = _lang, t = table, ver = _mod.Version;
         dlg.FileSelected += (string path) =>
         {
             var (ok, err) = TranslationStore.ImportInto(mid, lang, t, path);
-            if (ok) { TranslationSync.ReloadFromDisk(); SetStatus($"Uploaded {t}.json.", true, false); RebuildContent(); }
+            if (ok)
+            {
+                TranslationStore.RecordTargetVersion(mid, ver); // 번역 기준 버전 기록
+                TranslationSync.ReloadFromDisk(); SetStatus($"Uploaded {t}.json.", true, false); RebuildContent();
+            }
             else SetStatus("Upload failed: " + err, true, true);
             dlg.QueueFree();
         };

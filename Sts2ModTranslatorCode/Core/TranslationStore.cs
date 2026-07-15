@@ -275,6 +275,63 @@ public static class TranslationStore
         }
     }
 
+    // ── 대상 모드 버전 추적(싱크 감지) ──────────────────────────
+
+    /// <summary>대상 모드 id → 마지막으로 번역했을 때의 대상 모드 버전. 로컬 전용(내보내는 팩엔 미포함).</summary>
+    private static string TargetVersionsPath() => Path.Combine(Root, "target_versions" + DataExt);
+
+    /// <summary>
+    /// 이 대상 모드를 "지금 버전 기준으로 번역했다"고 기록. 저장/자동번역/업로드 성공 시 호출한다.
+    /// 이후 모드가 업데이트돼 버전이 달라지면 UI 가 "번역이 낡음"을 안내하는 기준이 된다.
+    /// </summary>
+    public static void RecordTargetVersion(string modId, string version)
+    {
+        if (string.IsNullOrEmpty(modId)) return;
+        try
+        {
+            var map = ReadJson(TargetVersionsPath());
+            map[modId] = version ?? "";
+            WriteJson(TargetVersionsPath(), new SortedDictionary<string, string>(map, StringComparer.Ordinal));
+        }
+        catch { /* best-effort — 기록 실패해도 번역 자체엔 영향 없음 */ }
+    }
+
+    /// <summary>이 대상 모드를 마지막으로 번역했을 때 기록된 버전. 없거나 빈 값이면 null.</summary>
+    public static string? GetRecordedTargetVersion(string modId)
+    {
+        try
+        {
+            var map = ReadJson(TargetVersionsPath());
+            return map.TryGetValue(modId, out var v) && !string.IsNullOrEmpty(v) ? v : null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>대상 모드 버전 기록을 제거(전체 리셋 시). 없으면 no-op.</summary>
+    public static void ClearRecordedTargetVersion(string modId)
+    {
+        if (string.IsNullOrEmpty(modId)) return;
+        try
+        {
+            var map = ReadJson(TargetVersionsPath());
+            if (map.Remove(modId))
+                WriteJson(TargetVersionsPath(), new SortedDictionary<string, string>(map, StringComparer.Ordinal));
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
+    /// 두 버전 문자열이 같은지(선행 'v'·공백 무시). 어느 한쪽이 비어 있으면(버전 미상) '같음'으로 취급해
+    /// 헛경고를 피한다 — 호출부는 비교 전에 현재 버전이 비어 있지 않은지 따로 확인한다.
+    /// </summary>
+    public static bool SameVersion(string? a, string? b)
+    {
+        string na = (a ?? "").Trim().TrimStart('v', 'V');
+        string nb = (b ?? "").Trim().TrimStart('v', 'V');
+        if (na.Length == 0 || nb.Length == 0) return true;
+        return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>주어진 모드/언어의 (총 키 수, 번역된 키 수). 진행률 표시용.</summary>
     public static (int total, int translated) Coverage(SupportedMod mod, string lang)
     {
@@ -631,6 +688,8 @@ public static class TranslationStore
                     WriteJson(Path.Combine(trDir, lang, table + DataExt), sorted);
                 }
             }
+            // 번역 기준이 된 대상 모드 버전을 팩에 동봉 → 소비자 쪽에서 "대상 모드가 업데이트됨"을 감지.
+            WriteSourceVersion(trDir, GetRecordedTargetVersion(mod.Id) ?? mod.Version);
 
             // 2) 매니페스트.
             var manifest = new
@@ -659,6 +718,20 @@ public static class TranslationStore
         {
             return (false, "", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// 내보낸 팩 안에 대상별로 두는 "번역 기준 대상 모드 버전" 파일명(translations/{대상id}/ 바로 아래).
+    /// 언어 폴더가 아니므로 BundledTranslationScanner 의 언어 순회에 걸리지 않는다.
+    /// </summary>
+    public const string SourceVersionFile = "source_version" + DataExt;
+
+    /// <summary>translations/{대상id}/ 아래에 번역 기준 버전을 기록. 버전 미상이면 쓰지 않는다.</summary>
+    private static void WriteSourceVersion(string targetDir, string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version)) return;
+        try { WriteRaw(Path.Combine(targetDir, SourceVersionFile), version.Trim()); }
+        catch { /* best-effort — 없으면 소비자 쪽 싱크 표시만 생략됨 */ }
     }
 
     /// <summary>번들 팩 폴더/매니페스트 id 접미사(복수형 — 단일 대상 내보내기의 "_Translation" 과 구별).</summary>
@@ -781,6 +854,9 @@ public static class TranslationStore
                         WriteJson(Path.Combine(trRoot, mod.Id, lang, table + DataExt), sorted);
                     }
                 }
+                // 대상별 번역 기준 버전 동봉(소비자 쪽 싱크 감지용).
+                WriteSourceVersion(Path.Combine(trRoot, mod.Id),
+                    GetRecordedTargetVersion(mod.Id) ?? mod.Version);
             }
 
             if (included.Count == 0)

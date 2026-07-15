@@ -21,6 +21,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes;
 using Sts2ModTranslator.Core;
+using Sts2ModTranslator.Ui;
 
 namespace Sts2ModTranslator;
 
@@ -133,6 +134,32 @@ internal static class SoloTest
                 else W($"  IsSafeResult MISMATCH: src='{cs}' res='{cr}' expected={expect} got={got}");
             }
             Assert(passed == cases.Length, $"DeepL safety token-preservation cases {passed}/{cases.Length}");
+
+            // ── 버전 기반 싱크 감지 ──────────────────────────────────
+            Assert(TranslationStore.SameVersion("1.0.0", "1.0.0")
+                   && TranslationStore.SameVersion("v1.0.0", "1.0.0")
+                   && TranslationStore.SameVersion("", "1.0.0")            // 버전 미상 → 같음(헛경고 방지)
+                   && !TranslationStore.SameVersion("1.0.0", "1.1.0"),
+                   "SameVersion normalize/compare");
+
+            const string Tid = "ZZ_SyncSelfTest";
+            TranslationStore.ClearRecordedTargetVersion(Tid);
+            var synScan = new ScanResult();
+            var synMod = new SupportedMod { Id = Tid, Name = "SyncTest", Version = "1.1.0" };
+
+            bool s0 = TranslatorPanel.SyncTag(synScan, synMod).Length == 0;          // 기록·팩 없음 → 경고 없음
+            TranslationStore.RecordTargetVersion(Tid, "1.0.0");
+            string s1 = TranslatorPanel.SyncTag(synScan, synMod);                    // 번역 v1.0.0, 모드 v1.1.0
+            TranslationStore.RecordTargetVersion(Tid, "1.1.0");
+            bool s2 = TranslatorPanel.SyncTag(synScan, synMod).Length == 0;          // 같은 버전 → 경고 없음
+            TranslationStore.ClearRecordedTargetVersion(Tid);
+            synScan.Bundled.SetSourceVersion(Tid, "0.9.0");
+            string s3 = TranslatorPanel.SyncTag(synScan, synMod);                    // 팩 v0.9.0, 모드 v1.1.0
+            TranslationStore.ClearRecordedTargetVersion(Tid);                        // 정리
+
+            Assert(s0 && s1.Contains("translated for v1.0.0") && s1.Contains("v1.1.0")
+                   && s2 && s3.Contains("pack for v0.9.0"),
+                   "SyncTag detects local + pack version drift");
 
             // 유저가 이어서 쓸 수 있게 원래 언어 복귀(어차피 비저장이지만 시각적으로도 원상복구).
             if (!string.Equals(originalLang, "kor", StringComparison.OrdinalIgnoreCase))
