@@ -227,8 +227,8 @@ public static class AutoTranslator
     private static bool IsSafeResult(string source, string result)
     {
         string src = SimpleLocCompat.Apply(source), res = SimpleLocCompat.Apply(result);
-        if (!LocValidator.ValidateFormatString(src, out _)) return true; // 원문부터 깨짐 — 비교 무의미
-        if (!LocValidator.ValidateFormatString(res, out _)) return false;
+        if (!TranslationSync.TryValidateFormat(src, out _)) return true; // 원문부터 깨짐 — 비교 무의미
+        if (!TranslationSync.TryValidateFormat(res, out _)) return false;
 
         var srcCount = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var p in BracePlaceholders(src)) srcCount[p] = srcCount.GetValueOrDefault(p) + 1;

@@ -33,6 +33,9 @@ public class MainFile
             var harmony = new Harmony(ModId);
             harmony.PatchAll(typeof(MainFile).Assembly);
             Logger.Info($"[{ModId}] initialized — LocManager.SetLanguage hooked.");
+#if DEBUG
+            SoloTest.ArmIfRequested(); // Debug 전용 solo-verify 셀프테스트(flag 없으면 no-op)
+#endif
         }
         catch (Exception ex)
         {

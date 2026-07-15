@@ -204,6 +204,22 @@ public static class TranslationSync
     private const int MaxInvalidLogPerTable = 10;
 
     /// <summary>
+    /// LocValidator 안전 래퍼. SmartFormat 파서는 일부 기형 문자열(예: "{X:diff(" — solo-verify
+    /// 실측)에서 ParsingErrors 대신 IndexOutOfRangeException 을 던진다. 그런 문자열은 런타임
+    /// 렌더링에서도 게임의 catch(FormattingException|ParsingErrors) 를 뚫고 나가므로(크래시 경로)
+    /// 예외 = 무효로 판정해 반드시 걸러낸다.
+    /// </summary>
+    internal static bool TryValidateFormat(string text, out string? error)
+    {
+        try { return LocValidator.ValidateFormatString(text, out error); }
+        catch (Exception ex)
+        {
+            error = $"format parser crashed ({ex.GetType().Name}) — invalid";
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 주입 직전 SmartFormat 문법 검증. 게임 자체 localization_override 로더는 LocValidator 로
     /// 깨진 항목을 걸러 적용하지 않지만, MergeWith 런타임 주입은 그 검증을 우회한다.
     /// 깨진 포맷 문자열은 카드 설명이 그려질 때마다(파일 이동/타겟팅 호버/co-op 카드 인텐트)
@@ -216,7 +232,7 @@ public static class TranslationSync
         List<string>? bad = null;
         foreach (var kv in dict)
         {
-            if (LocValidator.ValidateFormatString(kv.Value, out string? err)) continue;
+            if (TryValidateFormat(kv.Value, out string? err)) continue;
             bad ??= new List<string>();
             bad.Add(kv.Key);
             if (bad.Count <= MaxInvalidLogPerTable)
@@ -248,7 +264,7 @@ public static class TranslationSync
         foreach (var kv in d)
         {
             if (string.IsNullOrEmpty(kv.Value)) continue;
-            if (!LocValidator.ValidateFormatString(SimpleLocCompat.Apply(kv.Value), out _))
+            if (!TryValidateFormat(SimpleLocCompat.Apply(kv.Value), out _))
                 bad.Add(kv.Key);
         }
         return bad;

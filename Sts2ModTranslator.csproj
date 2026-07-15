@@ -38,6 +38,11 @@
         <None Include="Sts2ModTranslator.json" />
     </ItemGroup>
 
+    <!-- solo-verify 셀프테스트는 Debug 전용 — Release 배포본에는 컴파일 자체를 제외한다. -->
+    <ItemGroup Condition="'$(Configuration)' != 'Debug'">
+        <Compile Remove="Sts2ModTranslatorCode\Testing\**" />
+    </ItemGroup>
+
     <!-- 게임 pck 에서 추출한 STS 키워드 정식 번역(13개 언어). EnforceGlossary 가 로드해 하이라이트 키워드를 교정. -->
     <ItemGroup>
         <EmbeddedResource Include="glossary.json" />
