@@ -42,14 +42,7 @@ Everything below is for people who want to [b]create[/b] a translation.
 [/list]
 
 [h2]Machine-translate a first draft (DeepL)[/h2]
-Don't want to start from a blank template? Fill empty entries automatically with [b]DeepL[/b], then review and Save — it only ever fills [b]blank[/b] entries, so your own work is never overwritten.
-[list]
-[*]Paste your own [b]DeepL API key[/b] once (the free tier's 500,000 chars/month is plenty) via the [b]DeepL key…[/b] button. The key is stored [b]locally only[/b] and never ends up in exported packs.
-[*][b]Auto-fill[/b] drafts the current file; [b]Auto-fill all[/b] does every file at once. The buttons stay disabled until a key is set.
-[*][b]Placeholders and markup are protected[/b] — variables ([i]{Damage}[/i]), icon/image tags and highlight tags ([i][gold]…[/gold][/i]) are preserved so machine translation can't break them.
-[*][b]BaseLib mods supported[/b] — shorthand like [i]!Damage![/i] or [i]*keyword*[/i] (used by FGO-based mods) is converted like the original, so it renders as numbers/highlights instead of raw [i]!Var![/i] text.
-[/list]
-It's a [b]draft[/b] for every DeepL-supported language — game-specific terms still deserve a quick human pass.
+Don't start from a blank template — [b]DeepL[/b] fills the [b]empty[/b] entries and never overwrites your work. Paste your own API key once (the free tier's 500,000 chars/month is plenty): [b]Auto-fill[/b] drafts the open file, [b]Auto-fill all[/b] does every file at once. Placeholders, markup and BaseLib shorthand are protected, so machine translation can't break them. It's a draft — game-specific terms still deserve a human pass.
 
 [h2]🤖 Or hand it to an AI agent[/h2]
 An [b]AI coding agent[/b] (Claude Code and similar) reads a whole file at once, so terminology stays consistent — and it handles what DeepL must skip: some text hides translatable words [i]inside[/i] a placeholder ([i]{Amount:plural:a card|{} cards}[/i]), which machine translation has to leave in English.
@@ -59,20 +52,7 @@ An [b]AI coding agent[/b] (Claude Code and similar) reads a whole file at once, 
 Press [b]Translate with AI…[/b] on the mod list for the three steps, then [b]Reload[/b]. Bring your own agent — this mod only prepares the folder.
 
 [h2]Share translations as a standalone mod[/h2]
-Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Others install your pack (plus this mod) and the text applies automatically, no editing.
-[list]
-[*]Enter your name in [b]Author[/b], pick a mod, press [b]Install as mod[/b] — it builds a ready-to-ship [i]<ModName>_Translation[/i] mod in your local [i]<STS2>/mods/[/i] folder (manifest + your translations for every language you worked on). No DLL or coding needed.
-[*][b]Bundle many mods into one pack[/b] — on the mod list press [b]Bundle pack…[/b], tick several translated mods, name it, and [b]Install pack to mods[/b] to ship them all as a single Workshop item instead of one per mod.
-[*][b]Update without re-picking[/b] — an [b]Existing packs ▾[/b] menu re-loads a pack you already deployed (re-ticks its mods and bumps the version); a [b]Reset[/b] button clears everything to start a fresh pack.
-[*][b]Publish to the Workshop[/b] like any normal mod — subscribers who also have [b]Mod Translator[/b] get your text. Or just zip the folder to hand it over. Restart the game to test it first.
-[*]Installed packs are detected at boot and applied last: your in-editor edits beat a pack, a pack beats the original. The mod list shows each pack's per-language coverage (e.g. [i]pack: kor 87%[/i]).
-[/list]
-
-[h2]Updating a translation mod[/h2]
-When the original mod updates (new cards, reworded text), staying in sync is easy: relaunch and new keys are [b]detected automatically[/b] as empty entries — your existing work is untouched and removed lines fall back to the original. Translate only the gaps, press [b]Install as mod[/b] again ([b]Update installed mod[/b] pre-fills the next version), and re-upload to the same Workshop item.
-
-[h2]Translation tips[/h2]
-Keep placeholders ([b]!D![/b], [b]!B![/b], [b]!Crit![/b]) and markup ([b]*[/b]keyword, leading [b]#[/b], [b]/+[/b], [b][color][/b] tags) intact — change only the human-readable text. Leave a value [b]empty[/b] to keep the original (English) text for that entry.
+Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Press [b]Install as mod[/b], or [b]Bundle pack…[/b] to ship several mods' translations as a single Workshop item, and it builds a ready-to-publish folder — no DLL, no coding. Subscribers who also have Mod Translator get your text automatically, with no load order to worry about.
 
 [h2]Scope & compatibility[/h2]
 [list]
@@ -82,8 +62,9 @@ Keep placeholders ([b]!D![/b], [b]!B![/b], [b]!Crit![/b]) and markup ([b]*[/b]ke
 [*][b]No load-order requirement[/b] — translations are always applied last automatically.
 [/list]
 
-[h2]Source[/h2]
-Open source (MIT) — [url=https://github.com/ing-gom/sts2-mod-translator]github.com/ing-gom/sts2-mod-translator[/url]
+[h2]Full guide & source[/h2]
+Step-by-step docs — publishing and updating a pack, placeholder rules, the AI-agent workflow — plus the source (MIT):
+[url=https://github.com/ing-gom/sts2-mod-translator]github.com/ing-gom/sts2-mod-translator[/url]
 
 [hr][/hr]
 [i]Author: inggom[/i]
