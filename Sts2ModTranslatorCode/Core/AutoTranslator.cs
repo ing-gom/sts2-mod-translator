@@ -123,7 +123,9 @@ public static class AutoTranslator
         if (cur == null) return (false, editorJson, 0, 0, "Current JSON top-level is not an object.");
 
         var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
-        string? source = SourceCode(mod.SourceLang);
+        // 폴더 이름(SourceLang)이 아닌 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다 —
+        // 한국어를 eng/ 에 넣은 모드에 EN 을 보내면 오역되므로.
+        string? source = SourceCode(mod.ContentLang);
 
         try
         {
@@ -155,7 +157,8 @@ public static class AutoTranslator
         if (string.IsNullOrWhiteSpace(apiKey)) return (false, 0, 0, 0, "DeepL API key is not set.");
         string? target = DeepLTarget(lang);
         if (target == null) return (false, 0, 0, 0, $"DeepL does not support language '{lang}'.");
-        string? source = SourceCode(mod.SourceLang);
+        // 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다(폴더 이름 아님).
+        string? source = SourceCode(mod.ContentLang);
 
         var tables = mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal).ToList();
         int total = 0, totalSkipped = 0, files = 0, idx = 0;

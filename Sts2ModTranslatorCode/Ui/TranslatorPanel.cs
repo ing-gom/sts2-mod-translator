@@ -221,7 +221,10 @@ public static class TranslatorPanel
             string pack = PackTagForTarget(scan, m.Id);
             // 대상 모드가 번역 이후 업데이트됐으면 싱크 경고(내 번역 / 설치된 팩 각각).
             string sync = SyncTag(scan, m);
-            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{pack}{sync}");
+            // 폴더 이름과 실제 원문 언어가 다르면(예: 한국어 in eng/) 태그에 실제 언어를 병기.
+            string srcTag = string.Equals(m.ContentLang, m.SourceLang, StringComparison.OrdinalIgnoreCase)
+                ? "" : $"  (source: {LangDisplay(m.ContentLang)})";
+            var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{srcTag}{pack}{sync}");
             if (sync.Length > 0) { b.AddThemeColorOverride("font_color", RED); outdated++; }
             else if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
             b.Pressed += () => { _mod = mod; Navigate(View.Languages); };
@@ -301,7 +304,10 @@ public static class TranslatorPanel
         // 현재 설정 언어를 맨 위(기본 선택)로, 나머지는 게임 선언 순서를 유지(OrderBy 안정 정렬).
         var langs = TranslationSync.SupportedLanguages()
             .Concat(_mod.ShipsLangs)
-            .Where(l => !string.Equals(l, _mod.SourceLang, StringComparison.OrdinalIgnoreCase))
+            // 대상에서 제외하는 건 폴더 이름이 아니라 '실제 원문 언어(ContentLang)' 하나뿐.
+            // → 한국어를 eng/ 에 넣은 모드는 eng 가 정상적인 대상이 되어 '한국어→영어' 를 채울 수 있고,
+            //   정상 모드(eng=영어)는 ContentLang=eng 라 기존처럼 eng 가 제외된다.
+            .Where(l => !string.Equals(l, _mod.ContentLang, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => string.Equals(l, cur, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ToList();
@@ -310,6 +316,13 @@ public static class TranslatorPanel
         _content!.AddChild(Lbl(
             "Pick any language to translate. The current game language applies instantly; "
             + "others apply after you switch the game to that language.", GRAY));
+
+        // 폴더 이름(예: eng)과 실제 원문 언어가 다르면 명시 — DeepL source 오판 혼동 방지.
+        if (!string.Equals(_mod.ContentLang, _mod.SourceLang, StringComparison.OrdinalIgnoreCase))
+            _content!.AddChild(Lbl(
+                $"Note: this mod stores its original text in the '{_mod.SourceLang}' folder, but the text is "
+                + $"actually {LangDisplay(_mod.ContentLang)}. Auto-translation uses {LangDisplay(_mod.ContentLang)} "
+                + "as the source language.", GOLD));
 
         var list = ScrollList();
         foreach (var lang in langs)
@@ -1242,4 +1255,26 @@ public static class TranslatorPanel
         l.AddThemeColorOverride("font_color", c);
         return l;
     }
+
+    /// <summary>STS 언어 코드 → 사람이 읽는 이름(안내 문구용). 모르면 코드 그대로.</summary>
+    internal static string LangDisplay(string stsLang) => (stsLang ?? "").ToLowerInvariant() switch
+    {
+        "eng" => "English",
+        "kor" => "Korean",
+        "jpn" => "Japanese",
+        "zhs" or "chs" => "Chinese (Simplified)",
+        "zht" or "cht" => "Chinese (Traditional)",
+        "fra" or "fre" => "French",
+        "deu" or "ger" => "German",
+        "esp" or "spa" => "Spanish",
+        "rus" => "Russian",
+        "ptb" => "Portuguese (BR)",
+        "por" => "Portuguese",
+        "ita" => "Italian",
+        "pol" => "Polish",
+        "nld" or "dut" => "Dutch",
+        "tur" => "Turkish",
+        "ukr" => "Ukrainian",
+        _ => stsLang ?? "",
+    };
 }

@@ -13,6 +13,7 @@
 // 이 파일은 Debug 전용(csproj Compile Remove + #if DEBUG) — Release 배포본엔 포함되지 않는다.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -160,6 +161,46 @@ internal static class SoloTest
             Assert(s0 && s1.Contains("translated for v1.0.0") && s1.Contains("v1.1.0")
                    && s2 && s3.Contains("pack for v0.9.0"),
                    "SyncTag detects local + pack version drift");
+
+            // ── CJK 원문 감지(eng 폴더에 네이티브 텍스트) ─────────────────
+            // 폴더 이름이 아니라 값의 스크립트로 실제 언어를 잡는지 결정적 검증.
+            static Dictionary<string, Dictionary<string, string>> Tbl(params string[] vals)
+            {
+                var inner = new Dictionary<string, string>();
+                for (int i = 0; i < vals.Length; i++) inner["k" + i] = vals[i];
+                return new Dictionary<string, Dictionary<string, string>> { ["cards"] = inner };
+            }
+            (string[] vals, string folder, string expect, string what)[] detCases =
+            {
+                (new[] { "적에게 피해를 줍니다.", "방어도를 얻습니다." }, "eng", "kor", "korean-in-eng -> kor"),
+                (new[] { "{Damage:diff()} 피해를 줍니다. \n 힘을 얻습니다." }, "eng", "kor", "kor with {ph}/latin tokens -> kor"),
+                (new[] { "敵にダメージを与える。" }, "eng", "jpn", "kana present -> jpn"),
+                (new[] { "对敌人造成伤害。" }, "eng", "zhs", "han only -> zhs"),
+                (new[] { "Deal damage to the enemy." }, "eng", "eng", "english -> folderLang"),
+                (new[] { "A fairly long english sentence with only one 가 char." }, "eng", "eng", "sparse CJK -> folderLang"),
+            };
+            int detPass = 0;
+            foreach (var (vals, folder, expect, what) in detCases)
+            {
+                string got = ModLocScanner.DetectContentLang(Tbl(vals), folder);
+                if (got == expect) detPass++;
+                else W($"  DetectContentLang MISMATCH: {what} expected={expect} got={got}");
+            }
+            Assert(detPass == detCases.Length, $"CJK content-language detection {detPass}/{detCases.Length}");
+
+            // 실제 보고된 모드로 end-to-end 확인(워크샵 구독본이 로드돼 있을 때만).
+            var stu = scan?.Supported.FirstOrDefault(m => m.Id == "SlayTheUniverse");
+            if (stu != null)
+            {
+                W($"SlayTheUniverse loaded: SourceLang={stu.SourceLang} ContentLang={stu.ContentLang} ships=[{string.Join(",", stu.ShipsLangs)}]");
+                Assert(stu.SourceLang == "eng", "SlayTheUniverse source folder = eng");
+                Assert(stu.ContentLang == "kor", $"SlayTheUniverse content detected = kor (got '{stu.ContentLang}')");
+                // 게이팅: 현재 kor 로 플레이 중 → ContentLang==현재언어 라 이 모드는 주입 스킵 대상(자기 원문).
+                // eng 는 이제 정상 번역 대상(ContentLang 만 제외되므로).
+                Assert(!string.Equals("eng", stu.ContentLang, StringComparison.OrdinalIgnoreCase),
+                    "eng is a valid translation target (only ContentLang excluded)");
+            }
+            else W("SlayTheUniverse not loaded — skipping real-mod assertion (synthetic detection cases still cover it)");
 
             // 유저가 이어서 쓸 수 있게 원래 언어 복귀(어차피 비저장이지만 시각적으로도 원상복구).
             if (!string.Equals(originalLang, "kor", StringComparison.OrdinalIgnoreCase))

@@ -48,18 +48,16 @@ public static class TranslationSync
     /// </summary>
     public static int ReloadFromDisk()
     {
-        LastInjectInvalidCount = 0; // eng(주입 스킵) 경로에서 이전 카운트가 남지 않게
+        LastInjectInvalidCount = 0; // 재주입 전 이전 카운트 초기화
         var mgr = LocManager.Instance;
         if (mgr == null) return 0;
         var scan = EnsureScan();
         if (scan == null) return 0;
         string lang = mgr.Language;
-        int n = 0;
-        if (!string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase))
-        {
-            TranslationStore.WriteReport(scan, lang);
-            n = Inject(mgr, scan, lang);
-        }
+        // eng 도 스킵하지 않는다 — eng 폴더에 비영어 원문을 담은 모드는 eng 번역을 재주입해야 한다.
+        // 자기 원문 언어인 모드는 Inject 안에서 ContentLang 기준으로 걸러진다.
+        TranslationStore.WriteReport(scan, lang);
+        int n = Inject(mgr, scan, lang);
         RefreshLabels(mgr); // 이미 렌더된 라벨(메인메뉴 등)도 즉시 다시 읽게 통지
         return n;
     }
@@ -113,9 +111,9 @@ public static class TranslationSync
         var scan = EnsureScan();
         if (scan == null) return;
 
-        // eng 로 플레이 중이면 번역 대상 아님(원문). 템플릿/주입 모두 불필요.
-        if (string.Equals(language, "eng", StringComparison.OrdinalIgnoreCase)) return;
-
+        // 전역 eng 스킵을 두지 않는다 — eng 폴더에 비영어 원문(예: 한국어)을 담은 모드는 eng 로
+        // 플레이할 때 오히려 번역(영어 override)을 주입해야 한다. "자기 원문 언어면 스킵" 은
+        // EnsureTemplates/Inject 안에서 모드별 ContentLang 기준으로 처리한다.
         EnsureTemplates(scan, language); // 신규(또는 늦게 로드된) 모드만 증분 준비
         Inject(locMgr, scan, language);
     }
@@ -133,8 +131,8 @@ public static class TranslationSync
             var scan = EnsureScan();
             if (scan == null) return;
             string lang = locMgr.Language;
-            if (string.IsNullOrEmpty(lang) ||
-                string.Equals(lang, "eng", StringComparison.OrdinalIgnoreCase)) return;
+            if (string.IsNullOrEmpty(lang)) return;
+            // eng 도 스킵하지 않는다 — 모드별 ContentLang 게이팅이 EnsureTemplates/Inject 안에서 처리.
             EnsureTemplates(scan, lang);
             Inject(locMgr, scan, lang);
             RefreshLabels(locMgr); // 이미 그려진 메인메뉴 라벨도 즉시 재로컬라이즈
@@ -179,6 +177,8 @@ public static class TranslationSync
         bool wrote = false;
         foreach (var mod in scan.Supported)
         {
+            // 이 모드의 실제 원문 언어로 플레이 중이면 번역 대상 아님(자기 원문) — 템플릿 불필요.
+            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
             string key = language + "\0" + mod.Id;
             if (!_prepped.Add(key)) continue; // 이미 준비됨
             try { TranslationStore.EnsureTemplates(mod, language); wrote = true; }
@@ -277,7 +277,10 @@ public static class TranslationSync
         var supportedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in scan.Supported)
         {
-            supportedIds.Add(mod.Id);
+            supportedIds.Add(mod.Id); // 게이트보다 먼저 — bundled 루프가 중복 주입하지 않게.
+            // 이 모드의 실제 원문 언어로 플레이 중이면 원문 그대로가 정답 — 주입 스킵.
+            // (한국어를 eng/ 에 담은 모드는 eng≠ContentLang 이라 eng 주입이 정상 진행된다.)
+            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
             // 이 대상 모드에 설치된 번역 모드가 제공한 (언어별) 번역.
             var bundledForMod = scan.Bundled.ForTargetLang(mod.Id, language);
 
