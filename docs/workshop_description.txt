@@ -5,12 +5,9 @@ Translate the text of [b]other mods[/b] into [b]any language[/b] — right insid
 
 [hr][/hr]
 
-[h2]🌐 Quick start · 빠른 시작 · 快速开始 · クイックスタート · Быстрый старт[/h2]
+[h2]🌐 Quick start · 빠른 시작[/h2]
 [b]EN[/b]  🎮 Play a mod in your language → just subscribe to a translation pack that requires this mod.  ✍️ Translate one yourself → Main Menu ▸ Mod Translator, pick a mod & language, fill the text (DeepL can draft it).
 [b]한국어[/b]  🎮 모드를 내 언어로 플레이 → 이 모드를 필요로 하는 번역팩을 구독하면 끝.  ✍️ 직접 번역 → 메인 메뉴 ▸ 모드 번역기(Mod Translator)에서 모드·언어를 고른 뒤 텍스트 입력 (DeepL 자동 초안 지원).
-[b]简体中文[/b]  🎮 用你的语言游玩某模组 → 订阅一个依赖本模组的翻译包即可。  ✍️ 自己翻译 → 打开主菜单 ▸ 模组翻译器(Mod Translator)，选择模组和语言并填写文本（可用 DeepL 生成初稿）。
-[b]日本語[/b]  🎮 MODを自分の言語で遊ぶ → 本MODを必要とする翻訳パックをサブスクライブするだけ。  ✍️ 自分で翻訳 → メインメニュー ▸ MOD翻訳ツール(Mod Translator)を開き、MODと言語を選んでテキストを入力（DeepLで下訳可）。
-[b]Русский[/b]  🎮 Играть в мод на своём языке → подпишитесь на пакет перевода, требующий этот мод.  ✍️ Перевести самому → Главное меню ▸ Переводчик модов (Mod Translator), выберите мод и язык, заполните текст (черновик через DeepL).
 
 [hr][/hr]
 
@@ -38,6 +35,7 @@ Everything below is for people who want to [b]create[/b] a translation.
 [list]
 [*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right.
 [*][b]Reference dropdown[/b] — switch the left pane to any language the mod ships (compare against the existing Chinese/English), or [b]pack: <lang>[/b] to read an installed pack while you work.
+[*][b]The reference follows you[/b] — move the caret and the left pane scrolls to that entry, highlights it, and names the key in the header. It matches by key, not line number.
 [*][b]Line numbers[/b] and JSON validation on save.
 [*][b]Empty-entry navigator[/b] — a live blank count plus a [b]Next empty ▼[/b] button that jumps to the next untranslated line. Each file also shows an [i]◦ N empty[/i] tag.
 [*][b]Upload[/b] a file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow.
@@ -52,6 +50,13 @@ Don't want to start from a blank template? Fill empty entries automatically with
 [*][b]BaseLib mods supported[/b] — shorthand like [i]!Damage![/i] or [i]*keyword*[/i] (used by FGO-based mods) is converted like the original, so it renders as numbers/highlights instead of raw [i]!Var![/i] text.
 [/list]
 It's a [b]draft[/b] for every DeepL-supported language — game-specific terms still deserve a quick human pass.
+
+[h2]🤖 Or hand it to an AI agent[/h2]
+An [b]AI coding agent[/b] (Claude Code and similar) reads a whole file at once, so terminology stays consistent — and it handles what DeepL must skip: some text hides translatable words [i]inside[/i] a placeholder ([i]{Amount:plural:a card|{} cards}[/i]), which machine translation has to leave in English.
+[list]
+[*][b]Nothing to explain[/b] — the folder already holds the rules and your language's official in-game terms, taken from the game itself. No path to paste, no format to describe; agents pick them up on their own, and the files are rebuilt at every launch.
+[/list]
+Press [b]Translate with AI…[/b] on the mod list for the three steps, then [b]Reload[/b]. Bring your own agent — this mod only prepares the folder.
 
 [h2]Share translations as a standalone mod[/h2]
 Turn your work into its own mod — just like other mods reference [b]baselib[/b], a [i]translation mod[/i] references this one. Others install your pack (plus this mod) and the text applies automatically, no editing.

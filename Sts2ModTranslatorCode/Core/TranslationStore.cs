@@ -332,11 +332,18 @@ public static class TranslationStore
         return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>주어진 모드/언어의 (총 키 수, 번역된 키 수). 진행률 표시용.</summary>
+    /// <summary>
+    /// 주어진 모드/언어의 (총 키 수, 번역된 키 수). 진행률 표시용 — 원문이 빈 키는 제외된다.
+    /// 테이블별 집계를 그대로 합산해 파일 목록의 숫자와 항상 일치시킨다(집계 출처 단일화).
+    /// </summary>
     public static (int total, int translated) Coverage(SupportedMod mod, string lang)
     {
-        int total = mod.TotalKeys;
-        int tr = LoadNonEmptyOverrides(mod, lang).Values.Sum(d => d.Count);
+        int total = 0, tr = 0;
+        foreach (var table in mod.EngByTable.Keys)
+        {
+            var (t, n, _) = TableStatus(mod, lang, table);
+            total += t; tr += n;
+        }
         return (total, tr);
     }
 
@@ -382,15 +389,18 @@ public static class TranslationStore
     /// UI 파일 목록용 상태: (총 키, 번역된 키, JSON 깨짐 여부).
     /// invalid=true 면 파일을 파싱할 수 없어 번역이 적용되지 않는 상태(편집기에서 수정 필요).
     /// 번역 카운트는 템플릿(eng) 키 집합 안에서만 센다.
+    /// ★원문이 빈 키는 분자·분모 <b>양쪽에서</b> 제외 — 한쪽만 빼면 100%를 넘길 수 있다.
     /// </summary>
     public static (int total, int translated, bool invalid) TableStatus(
         SupportedMod mod, string lang, string table)
     {
         var keys = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
-        int total = keys.Count;
+        int total = keys.Values.Count(SupportedMod.IsTranslatable);
         if (!TryReadJson(OverridePath(mod.Id, lang, table), out var ov, out _))
             return (total, 0, true); // JSON 형식 오류 — 적용 안 됨
-        int tr = ov.Count(kv => keys.ContainsKey(kv.Key) && !string.IsNullOrEmpty(kv.Value));
+        int tr = ov.Count(kv => keys.TryGetValue(kv.Key, out var src)
+                                && SupportedMod.IsTranslatable(src)
+                                && !string.IsNullOrEmpty(kv.Value));
         return (total, tr, false);
     }
 
@@ -922,8 +932,7 @@ public static class TranslationStore
         var supported = new List<object>();
         foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
         {
-            int total = m.TotalKeys;
-            int translated = LoadNonEmptyOverrides(m, lang).Values.Sum(d => d.Count);
+            var (total, translated) = Coverage(m, lang); // 파일 목록·패널과 같은 집계 경로
             supported.Add(new
             {
                 id = m.Id,

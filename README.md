@@ -26,8 +26,9 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 
 - Side-by-side panes: original (read-only) on the left, your translation on the right.
 - Reference-language toggle: if a mod already ships other languages, switch the left pane to compare against them.
+- **The reference follows you:** move the caret and the left pane scrolls to the same entry and highlights it, with the key you're on named in the header. It matches by key, not line number, so it stays correct even when the reference language translated only part of the file — and says *not in this reference* when the key is missing there entirely.
 - Line numbers + JSON validation on save.
-- **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. Handy for finding the few entries auto-fill skips (those whose source text is itself empty). The file list also shows an `◦ N empty` tag per file.
+- **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. The file list also shows an `◦ N empty` tag per file. Entries whose original text is itself empty are left out of the count — there is nothing to translate in them, so they never stand between you and 100%.
 
 ### Machine-translation drafts (DeepL)
 
@@ -37,6 +38,38 @@ To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:
 - **Auto-fill ✨** drafts the open file; **Auto-fill all ✨** drafts every file for the current language. Existing translations are never overwritten — only blanks are filled, as a draft to review.
 - **Keyword accuracy:** highlighted game keywords (`Vulnerable`, `Block`, `Exhaust`, …) are corrected to the game's own official term in your language — extracted from the game's localization for 13 languages — so drafts match in-game wording even when the machine translation doesn't.
 - **Placeholders** (`!D!`, `[color]…[/color]`, `{…}`) are protected so the translation can't corrupt them.
+
+### Translate with an AI agent
+
+DeepL translates entry by entry. An AI coding agent (Claude Code and similar) can read a
+whole file at once — so it keeps terminology consistent across a mod and handles the
+syntax DeepL has to skip.
+
+The `Translations/` folder sets one up for you. There is no path to paste and no format
+to explain — everything the agent needs is already in the folder:
+
+- **`.claude/skills/translate-mod/SKILL.md`** — the rules: which files to edit, what an
+  empty value means, which placeholders must survive untouched, and how many
+  `{X:plural:…}` branches your target language actually needs. Agents pick this up on
+  their own when run from this folder.
+- **`glossary_<lang>.txt`** — the game's own official term for every keyword in your
+  language, so the agent writes the wording players already know instead of inventing a
+  synonym for *Vulnerable* or *Exhaust*.
+- **`supported_mods.txt`** — the work list: each mod, its tables, and current coverage.
+
+Press **Translate with AI…** on the mods list — it copies the folder path and shows the
+three steps (open a terminal there, run your agent, ask it to translate). Press
+**Reload** when the agent finishes to apply the result.
+
+Both files are rewritten on every launch, so they always match the installed version and
+your current language, and they come back on their own if a Workshop update wipes them.
+
+> Why this matters for quality: `{Amount:plural:a card|[blue]{}[/blue] cards}` holds
+> translatable text *inside* the placeholder. Machine translation masks the whole thing
+> and leaves those branches in English. The rules file tells the agent to translate
+> inside the branches — and that Korean, Japanese, Chinese and Thai must end up with
+> exactly **one** branch, because the game always renders the first one for those
+> languages.
 
 ### BaseLib mods
 

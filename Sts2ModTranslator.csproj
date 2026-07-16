@@ -48,6 +48,11 @@
         <EmbeddedResource Include="glossary.json" />
     </ItemGroup>
 
+    <!-- AI 에이전트용 번역 지침. AiKitWriter 가 Translations/.claude/skills/ 로 풀어 쓴다. -->
+    <ItemGroup>
+        <EmbeddedResource Include="ai_skill.md" />
+    </ItemGroup>
+
     <Target Name="CheckDependencyPaths">
         <Error Text=" Slay the Spire 2 data not found at path '$(Sts2DataDir)'"
                Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)')" />

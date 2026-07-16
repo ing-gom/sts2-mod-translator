@@ -191,6 +191,9 @@ public static class TranslationSync
         if (wrote)
         {
             TranslationStore.WriteReport(scan, language);
+            // AI 킷은 리포트와 한 쌍 — 스킬이 그 리포트를 작업목록으로 참조한다. _prepped 가 인메모리라
+            // 이 블록은 부팅마다 한 번 실행되므로, 워크샵 업데이트로 폴더가 갈아엎혀도 여기서 복구된다.
+            AiKitWriter.Write(language);
             MainFile.Logger.Info(
                 $"[Sts2ModTranslator] templates+report ready for '{language}' → {TranslationStore.Root}");
         }

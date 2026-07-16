@@ -37,7 +37,14 @@ public sealed class SupportedMod
     public Dictionary<string, Dictionary<string, string>> EngByTable =>
         ByLang.TryGetValue(SourceLang, out var d) ? d : new();
 
-    public int TotalKeys => EngByTable.Values.Sum(d => d.Count);
+    /// <summary>
+    /// 번역 대상 키 수. <b>원문 값이 빈 키는 제외</b>한다 — 번역할 것이 없어 영원히 채워지지 않으므로
+    /// 분모에 남겨두면 진행률이 100%에 도달하지 못한다(예: SlayTheUniverse 26/1479 → 최대 98.2%).
+    /// </summary>
+    public int TotalKeys => EngByTable.Values.Sum(d => d.Values.Count(IsTranslatable));
+
+    /// <summary>원문이 비어 있으면 번역 대상이 아니다 — 진행률·빈칸 내비게이터 공통 판정.</summary>
+    public static bool IsTranslatable(string? sourceValue) => !string.IsNullOrEmpty(sourceValue);
 }
 
 /// <summary>미지원 모드 한 개 + 사유.</summary>

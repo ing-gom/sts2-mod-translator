@@ -1,0 +1,11 @@
+{
+  "id": "Sts2GateTest_Translations",
+  "name": "Solo gate test (fixture)",
+  "author": "inggom",
+  "description": "solo-verify fixture — a translation pack carrying one valid and one broken {format} entry, used to prove the SmartFormat injection gate filters the broken one. Not a real mod; harmless if loaded (its keys are read by nothing).",
+  "version": "1.0.0",
+  "has_pck": false,
+  "has_dll": false,
+  "dependencies": [{ "id": "Sts2ModTranslator", "min_version": "1.3.0" }],
+  "affects_gameplay": false
+}

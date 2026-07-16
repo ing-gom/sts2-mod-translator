@@ -26,3 +26,8 @@ Thumbs.db
 
 # Runtime translation data (generated in the game mods install dir)
 Translations/
+
+# ★단, 테스트 픽스처는 추적한다. 위 규칙은 앵커가 없어 어느 깊이의 translations/ 든 삼키고
+# (Windows 는 core.ignorecase 라 대소문자도 무시), 그 탓에 solo-verify 게이트 픽스처가
+# 손으로 심어둔 채 커밋되지 않아 유실됐다 — 배터리가 조용히 8/11 로 퇴화해 회귀처럼 보였다.
+!testdata/**

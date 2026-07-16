@@ -31,8 +31,13 @@ public static class TranslatorPanel
     private static Button? _back;
     private static VBoxContainer? _content;
     private static TextEdit? _editor;
+    private static TextEdit? _srcEdit;   // 참조(원문) 패널 — 번역 캐럿을 따라 같은 키로 스크롤된다
+    private static Label? _refKeyLbl;    // 지금 편집 중인 키 표시(참조 패널 헤더)
     private static Label? _status;
     private static Label? _emptyLbl;
+
+    /// <summary>참조 패널의 키 → 줄 번호. 참조 텍스트가 바뀔 때만 다시 만든다.</summary>
+    private static Dictionary<string, int> _refLineByKey = new(StringComparer.Ordinal);
 
     private static View _view = View.Mods;
     private static SupportedMod? _mod;
@@ -193,6 +198,9 @@ public static class TranslatorPanel
         if (_content == null) return;
         foreach (var c in _content.GetChildren()) c.QueueFree();
         _editor = null;
+        _srcEdit = null;
+        _refKeyLbl = null;
+        _refLineByKey.Clear();
         _emptyLbl = null;
 
         switch (_view)
@@ -256,11 +264,15 @@ public static class TranslatorPanel
         dk.CustomMinimumSize = new Vector2(150, 40);
         dk.TooltipText = "Set the DeepL API key used by the editor's Auto-fill button.";
         dk.Pressed += () => PromptApiKey(() => { if (_view == View.Mods) RebuildContent(); });
+        var ai = ActionButton("Translate with AI…");
+        ai.CustomMinimumSize = new Vector2(180, 40);
+        ai.TooltipText = "Use an AI coding agent to translate. Shows how to start; rules are already in the folder.";
+        ai.Pressed += PromptAiKit;
         var pk = ActionButton("Bundle pack…");
         pk.CustomMinimumSize = new Vector2(160, 40);
         pk.TooltipText = "Bundle several mods' translations into one shareable translation pack.";
         pk.Pressed += () => Navigate(View.ExportPack);
-        footer.AddChild(of); footer.AddChild(rl); footer.AddChild(dk); footer.AddChild(pk);
+        footer.AddChild(of); footer.AddChild(rl); footer.AddChild(dk); footer.AddChild(ai); footer.AddChild(pk);
         _content!.AddChild(footer);
     }
 
@@ -664,7 +676,10 @@ public static class TranslatorPanel
         foreach (var (table, dict) in byTable)
         {
             if (!sm.EngByTable.TryGetValue(table, out var eng)) continue;
-            tr += dict.Count(kv => eng.ContainsKey(kv.Key) && !string.IsNullOrEmpty(kv.Value));
+            // 분모(TotalKeys)가 원문 빈 키를 빼므로 분자도 같은 기준으로 세야 100% 를 넘지 않는다.
+            tr += dict.Count(kv => eng.TryGetValue(kv.Key, out var src)
+                                   && SupportedMod.IsTranslatable(src)
+                                   && !string.IsNullOrEmpty(kv.Value));
         }
         return (tr, sm.TotalKeys);
     }
@@ -826,6 +841,15 @@ public static class TranslatorPanel
         for (int i = 0; i < refItems.Count; i++) refOpt.AddItem(refItems[i].label, i);
         refOpt.Select(defIdx);
         srcHeader.AddChild(refOpt);
+        // 지금 편집 중인 키. 참조에 그 키가 없으면(참조 언어가 일부만 번역했거나 override 가 낡은
+        // 경우) 참조 패널이 움직이지 않는데, 그게 고장인지 원래 없는 건지 여기서 구분해 준다.
+        _refKeyLbl = Lbl("", GRAY);
+        _refKeyLbl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        // ★키는 최대 97자까지 나온다(STS2_WINE_FOX_EVENT_….description). 클립하지 않으면 라벨의
+        // 최소 크기가 헤더를 밀어 패널 전체가 화면 밖으로 자란다(Godot: min-size 가 앵커를 이김).
+        _refKeyLbl.ClipText = true;
+        _refKeyLbl.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
+        srcHeader.AddChild(_refKeyLbl);
         srcCol.AddChild(srcHeader);
 
         var srcEdit = new CodeEdit
@@ -834,15 +858,20 @@ public static class TranslatorPanel
             Editable = false,
             WrapMode = TextEdit.LineWrappingMode.Boundary,
             GuttersDrawLineNumbers = true,
+            HighlightCurrentLine = true, // 캐럿이 따라간 원문 줄을 눈에 보이게(기본값 false)
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         srcCol.AddChild(srcEdit);
         panes.AddChild(srcCol);
+        _srcEdit = srcEdit;
+        RebuildRefIndex();
 
         refOpt.ItemSelected += (long idx) =>
         {
             if (idx >= 0 && idx < refItems.Count) srcEdit.Text = RefText((int)idx);
+            RebuildRefIndex();  // 참조 언어마다 키 집합·줄 배치가 다르다
+            SyncRefToCaret();   // 새 참조에서도 편집 중인 키를 계속 비춘다
         };
 
         var ovCol = new VBoxContainer
@@ -862,7 +891,7 @@ public static class TranslatorPanel
         nextEmpty.CustomMinimumSize = new Vector2(150, 36);
         nextEmpty.TooltipText =
             "Jump to the next untranslated (empty) entry.\n"
-            + "Auto-fill skips keys whose source text is empty — find & fill them by hand here.";
+            + "Entries whose original text is empty are skipped — there is nothing to translate in them.";
         nextEmpty.Pressed += JumpToNextEmpty;
         ovHeader.AddChild(nextEmpty);
         ovCol.AddChild(ovHeader);
@@ -872,12 +901,15 @@ public static class TranslatorPanel
             Text = TranslationStore.OverrideText(_mod.Id, _lang, _table),
             WrapMode = TextEdit.LineWrappingMode.Boundary,
             GuttersDrawLineNumbers = true,
+            HighlightCurrentLine = true, // 편집 중인 줄 = 원문에서 비추는 줄, 양쪽을 같은 방식으로
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
         _editor.TextChanged += UpdateEmptyCount;
+        _editor.CaretChanged += SyncRefToCaret; // 캐럿이 놓인 키를 참조 패널이 따라온다
         ovCol.AddChild(_editor);
         UpdateEmptyCount();
+        SyncRefToCaret(); // 열자마자 첫 항목을 맞춰 둔다
         panes.AddChild(ovCol);
 
         _content!.AddChild(panes);
@@ -920,15 +952,76 @@ public static class TranslatorPanel
 
     // ── 빈 항목 탐색 ────────────────────────────────────────────
     // ToPrettyJson 이 키당 한 줄을 보장하므로("KEY": "",) 라인 정규식으로 빈 값 항목을 찾는다.
+    // 그룹 1 = 키 — 원문 조회에 쓴다.
     private static readonly Regex EmptyEntryRx =
-        new(@"^\s*""(?:[^""\\]|\\.)+""\s*:\s*""""\s*,?\s*$", RegexOptions.Compiled);
+        new(@"^\s*""((?:[^""\\]|\\.)+)""\s*:\s*""""\s*,?\s*$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 값이 빈 항목의 줄 번호. ★원문 자체가 빈 키는 제외한다 — 번역할 내용이 없어 채울 수 없고,
+    /// 진행률도 그 키를 분모에서 빼므로 여기서 세면 "100% 인데 N empty" 라는 모순이 보인다.
+    /// 원문에서 키를 못 찾으면(이스케이프 등) 안전하게 빈칸으로 취급해 노출한다.
+    /// </summary>
+    // 임의의 "KEY": … 항목 줄에서 키만 뽑는다(값은 보지 않음). ToPrettyJson 이 키당 한 줄을 보장.
+    private static readonly Regex EntryKeyRx =
+        new(@"^\s*""((?:[^""\\]|\\.)+)""\s*:", RegexOptions.Compiled);
+
+    /// <summary>참조 패널의 키 → 줄 번호 인덱스를 다시 만든다(참조 언어를 바꿨을 때 등).</summary>
+    private static void RebuildRefIndex()
+    {
+        _refLineByKey = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (_srcEdit == null || !GodotObject.IsInstanceValid(_srcEdit)) return;
+        int n = _srcEdit.GetLineCount();
+        for (int i = 0; i < n; i++)
+        {
+            var m = EntryKeyRx.Match(_srcEdit.GetLine(i));
+            if (m.Success) _refLineByKey[m.Groups[1].Value] = i;
+        }
+    }
+
+    /// <summary>
+    /// 번역 패널의 캐럿이 놓인 키를 참조 패널에서 찾아 화면 중앙에 맞춘다.
+    /// ★줄 번호가 아니라 <b>키</b>로 맞추는 이유: 두 패널 모두 줄바꿈(Boundary)이 켜져 있어 같은
+    /// 줄 번호라도 화면 행이 어긋나고, 참조 언어가 일부만 번역했거나 override 가 낡으면 키 집합
+    /// 자체가 다르다(실측: 541쌍 중 51쌍 불일치). 줄로 맞추면 그 경우 조용히 다른 항목을 가리킨다.
+    /// 참조에 없는 키면 아무것도 하지 않는다 — 마지막 위치를 유지하는 편이 엉뚱한 점프보다 낫다.
+    /// </summary>
+    private static void SyncRefToCaret()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        if (_srcEdit == null || !GodotObject.IsInstanceValid(_srcEdit)) return;
+        var m = EntryKeyRx.Match(_editor.GetLine(_editor.GetCaretLine()));
+        if (!m.Success) return; // 여는 중괄호·빈 줄 등 — 마지막 상태 유지
+        string key = m.Groups[1].Value;
+        if (_refLineByKey.TryGetValue(key, out int line))
+        {
+            _srcEdit.SetCaretLine(line);           // 현재 줄 하이라이트 = 어느 항목인지 눈에 보이게
+            _srcEdit.SetLineAsCenterVisible(line);
+            SetRefKey(key, missing: false);
+        }
+        else SetRefKey(key, missing: true); // 참조에 없는 키 — 패널은 두고 이유만 알린다
+    }
+
+    /// <summary>참조 헤더의 "지금 이 키" 표시. missing=참조 언어에 그 키가 아예 없음.</summary>
+    private static void SetRefKey(string key, bool missing)
+    {
+        if (_refKeyLbl == null || !GodotObject.IsInstanceValid(_refKeyLbl)) return;
+        _refKeyLbl.Text = missing ? $"  {key}  — not in this reference" : $"  {key}";
+        _refKeyLbl.AddThemeColorOverride("font_color", missing ? GOLD : WHITE);
+    }
 
     private static List<int> EmptyEntryLines(TextEdit ed)
     {
+        var src = _mod != null && _mod.EngByTable.TryGetValue(_table, out var e) ? e : null;
         var lines = new List<int>();
         int n = ed.GetLineCount();
         for (int i = 0; i < n; i++)
-            if (EmptyEntryRx.IsMatch(ed.GetLine(i))) lines.Add(i);
+        {
+            var m = EmptyEntryRx.Match(ed.GetLine(i));
+            if (!m.Success) continue;
+            if (src != null && src.TryGetValue(m.Groups[1].Value, out var s)
+                && !SupportedMod.IsTranslatable(s)) continue; // 원문이 빔 — 채울 수 없는 항목
+            lines.Add(i);
+        }
         return lines;
     }
 
@@ -1101,6 +1194,50 @@ public static class TranslatorPanel
             if (le.Text.Trim().Length > 0) onSaved?.Invoke();
             if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree();
         };
+        dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
+        _root.AddChild(dlg);
+        dlg.PopupCentered();
+    }
+
+    /// <summary>
+    /// AI 에이전트로 번역을 시작하는 법을 안내. 킷 자체는 부팅마다 자동 생성되므로 여기서는
+    /// 멱등하게 갱신만 하고(폴더를 손댔거나 세션 중 언어를 바꾼 경우 대비) 다음 행동을 알려준다.
+    /// 탐색기만 열면 사용자는 거기서 터미널을 어떻게 여는지 모른다 — 경로 복사 + 3단계가 핵심.
+    /// </summary>
+    private static void PromptAiKit()
+    {
+        if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+        string lang = TranslationSync.CurrentLanguage();
+        AiKitWriter.Write(lang);
+
+        string root = TranslationStore.Root;
+        try { DisplayServer.ClipboardSet(root); }
+        catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] 클립보드 복사 실패: {ex.Message}"); }
+
+        var dlg = new AcceptDialog
+        {
+            Title = "Translate with AI",
+            OkButtonText = "Open folder",
+            MinSize = new Vector2I(680, 0),
+        };
+        var box = new VBoxContainer();
+        box.AddChild(Lbl("This folder is ready for AI coding agents (Claude Code and similar).", GRAY));
+        box.AddChild(Lbl($"Translation rules and the official '{lang}' term glossary are already written here,", GRAY));
+        box.AddChild(Lbl("so you don't need to explain the format or paste any path.", GRAY));
+        var path = new LineEdit
+        {
+            Text = root,
+            Editable = false,
+            CustomMinimumSize = new Vector2(640, 36),
+        };
+        box.AddChild(path);
+        box.AddChild(Lbl("  1.  Open a terminal in this folder   (path copied to clipboard)", WHITE));
+        box.AddChild(Lbl("  2.  Run:  claude", WHITE));
+        box.AddChild(Lbl($"  3.  Ask:  \"translate <mod name> into {lang}\"", WHITE));
+        box.AddChild(Lbl("The agent picks up the rules on its own. Press Reload here when it finishes.", GRAY));
+        dlg.AddChild(box);
+
+        dlg.Confirmed += () => { OpenFolder(); if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
         dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
         _root.AddChild(dlg);
         dlg.PopupCentered();

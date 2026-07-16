@@ -1,0 +1,4 @@
+{
+  "SOLOGATE-BROKEN": "bad {Damage:diff(",
+  "SOLOGATE-VALID": "게이트 유효 {0}"
+}

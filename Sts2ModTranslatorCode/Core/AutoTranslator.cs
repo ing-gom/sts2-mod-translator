@@ -567,6 +567,14 @@ public static class AutoTranslator
     // 영문 키워드는 카드 텍스트 표기와 정확히 일치(대소문자 구분). 없거나 로드 실패 시 빈 표(교정 no-op).
     private static readonly Dictionary<string, Dictionary<string, string>> Glossary = LoadGlossary();
 
+    /// <summary>
+    /// 한 언어의 공식 용어표(영문 키워드 → 정식 번역). 없으면 null.
+    /// AiKitWriter 가 디스크로 덤프해 AI 에이전트가 같은 용어를 쓰게 한다 — glossary.json 은
+    /// 임베디드 리소스라 폴더에서 작업하는 외부 도구는 원래 접근할 방법이 없다.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string>? GlossaryFor(string lang)
+        => Glossary.TryGetValue(lang ?? "", out var g) && g.Count > 0 ? g : null;
+
     private static Dictionary<string, Dictionary<string, string>> LoadGlossary()
     {
         var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
