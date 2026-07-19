@@ -224,6 +224,8 @@ public static class TranslatorPanel
             // 폴더 이름과 실제 원문 언어가 다르면(예: 한국어 in eng/) 태그에 실제 언어를 병기.
             string srcTag = string.Equals(m.ContentLang, m.SourceLang, StringComparison.OrdinalIgnoreCase)
                 ? "" : $"  (source: {LangDisplay(m.ContentLang)})";
+            // 원문이 혼합(부분 번역)이면 명시 — 원문 언어로도 섞인 외국어 항목을 덮어쓸 수 있음을 알린다.
+            if (m.HasMixedSource) srcTag += "  (partly translated — mixed source)";
             var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{srcTag}{pack}{sync}");
             if (sync.Length > 0) { b.AddThemeColorOverride("font_color", RED); outdated++; }
             else if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
@@ -307,7 +309,10 @@ public static class TranslatorPanel
             // 대상에서 제외하는 건 폴더 이름이 아니라 '실제 원문 언어(ContentLang)' 하나뿐.
             // → 한국어를 eng/ 에 넣은 모드는 eng 가 정상적인 대상이 되어 '한국어→영어' 를 채울 수 있고,
             //   정상 모드(eng=영어)는 ContentLang=eng 라 기존처럼 eng 가 제외된다.
-            .Where(l => !string.Equals(l, _mod.ContentLang, StringComparison.OrdinalIgnoreCase))
+            // 예외: 원문이 혼합(부분 번역)인 모드는 ContentLang 도 대상으로 남긴다 — 원문에 섞인
+            //   외국어 항목(예: 영어 원문 속 중국어)을 그 언어(영어)로 덮어쓸 수 있어야 하기 때문.
+            .Where(l => _mod.HasMixedSource
+                        || !string.Equals(l, _mod.ContentLang, StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => string.Equals(l, cur, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ToList();
@@ -323,6 +328,16 @@ public static class TranslatorPanel
                 $"Note: this mod stores its original text in the '{_mod.SourceLang}' folder, but the text is "
                 + $"actually {LangDisplay(_mod.ContentLang)}. Auto-translation uses {LangDisplay(_mod.ContentLang)} "
                 + "as the source language.", GOLD));
+
+        // 원문이 혼합(부분 번역)이면: 원문 언어 자체가 대상 목록에 있는 이유를 설명한다.
+        // (예: 영어가 원문이지만 일부 항목이 중국어인 모드 → 영어를 골라 그 항목만 영어로 덮어쓴다.)
+        if (_mod.HasMixedSource)
+            _content!.AddChild(Lbl(
+                $"Note: this mod's original ({LangDisplay(_mod.ContentLang)}) text is only partly translated — "
+                + "some entries are still in another language. That's why you can pick "
+                + $"{LangDisplay(_mod.ContentLang)} itself here: choose it to override just those foreign entries "
+                + "(leave the already-correct ones empty to keep them). Use \"Next empty ▼\" and the left "
+                + "reference pane to spot them.", GOLD));
 
         var list = ScrollList();
         foreach (var lang in langs)

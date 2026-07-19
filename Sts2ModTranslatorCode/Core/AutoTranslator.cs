@@ -125,7 +125,9 @@ public static class AutoTranslator
         var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
         // 폴더 이름(SourceLang)이 아닌 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다 —
         // 한국어를 eng/ 에 넣은 모드에 EN 을 보내면 오역되므로.
-        string? source = SourceCode(mod.ContentLang);
+        // 단, 원문이 혼합(부분 번역)이면 항목마다 언어가 달라 단일 source_lang 이 오히려 해가 된다
+        // → source 를 비워 DeepL 자동감지에 맡긴다(영어 항목은 그대로, 섞인 중국어 항목만 번역).
+        string? source = mod.HasMixedSource ? null : SourceCode(mod.ContentLang);
 
         try
         {
@@ -158,7 +160,8 @@ public static class AutoTranslator
         string? target = DeepLTarget(lang);
         if (target == null) return (false, 0, 0, 0, $"DeepL does not support language '{lang}'.");
         // 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다(폴더 이름 아님).
-        string? source = SourceCode(mod.ContentLang);
+        // 혼합 원문은 항목별 언어가 달라 자동감지에 맡긴다(위 FillEditorAsync 와 동일 이유).
+        string? source = mod.HasMixedSource ? null : SourceCode(mod.ContentLang);
 
         var tables = mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal).ToList();
         int total = 0, totalSkipped = 0, files = 0, idx = 0;

@@ -29,6 +29,10 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Line numbers + JSON validation on save.
 - **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. Handy for finding the few entries auto-fill skips (those whose source text is itself empty). The file list also shows an `◦ N empty` tag per file.
 
+### Partially-translated (mixed-language) mods
+
+Some mods ship an incomplete translation — most of their text is in one language but a chunk was never translated (e.g. a mostly-English mod with some cards still in Chinese). Normally the mod's own source language isn't offered as a target (there's nothing to translate). But when the source is detected as *mixed*, that language stays selectable and is tagged **"partly translated — mixed source"**: pick it to override just the foreign leftovers into the language you're playing, leaving the already-correct entries empty. The left reference pane and **Next empty ▼** help you find them, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated.
+
 ### Machine-translation drafts (DeepL)
 
 To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:

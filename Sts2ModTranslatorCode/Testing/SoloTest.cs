@@ -188,6 +188,33 @@ internal static class SoloTest
             }
             Assert(detPass == detCases.Length, $"CJK content-language detection {detPass}/{detCases.Length}");
 
+            // ── 혼합(부분 번역) 원문 감지 — Black Souls 케이스 ───────────
+            // 대부분 영어 + 일부 중국어인 원문(eng 폴더)에서 ContentLang=eng, HasMixedSource=true 여야
+            // 영어를 대상으로 골라 섞인 중국어 항목을 덮어쓸 수 있다.
+            static Dictionary<string, Dictionary<string, string>> Mix(int engN, int zhN)
+            {
+                var inner = new Dictionary<string, string>();
+                for (int i = 0; i < engN; i++) inner["e" + i] = "Deal damage to the enemy and gain block.";
+                for (int i = 0; i < zhN; i++) inner["z" + i] = "对敌人造成伤害并获得格挡。";
+                return new Dictionary<string, Dictionary<string, string>> { ["cards"] = inner };
+            }
+            (Dictionary<string, Dictionary<string, string>> tbl, string folder, string lang, bool mixed, string what)[] mixCases =
+            {
+                (Mix(20, 6), "eng", "eng", true,  "eng + 23% chinese entries -> eng, mixed"),
+                (Mix(30, 0), "eng", "eng", false, "pure english -> eng, not mixed"),
+                (Mix(60, 2), "eng", "eng", false, "eng + 2 stray chinese entries -> not mixed (below floor)"),
+                (Mix(0, 20), "zhs", "zhs", false, "pure chinese -> zhs, not mixed"),
+                (Mix(8, 20), "zhs", "zhs", true,  "chinese + ~29% english entries -> zhs, mixed"),
+            };
+            int mixPass = 0;
+            foreach (var (tbl, folder, expLang, expMix, what) in mixCases)
+            {
+                string got = ModLocScanner.DetectContentLang(tbl, folder, out bool gotMix);
+                if (got == expLang && gotMix == expMix) mixPass++;
+                else W($"  mixed-source MISMATCH: {what} expected=({expLang},{expMix}) got=({got},{gotMix})");
+            }
+            Assert(mixPass == mixCases.Length, $"mixed-source detection {mixPass}/{mixCases.Length}");
+
             // 실제 보고된 모드로 end-to-end 확인(워크샵 구독본이 로드돼 있을 때만).
             var stu = scan?.Supported.FirstOrDefault(m => m.Id == "SlayTheUniverse");
             if (stu != null)

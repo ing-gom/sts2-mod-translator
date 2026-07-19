@@ -178,7 +178,9 @@ public static class TranslationSync
         foreach (var mod in scan.Supported)
         {
             // 이 모드의 실제 원문 언어로 플레이 중이면 번역 대상 아님(자기 원문) — 템플릿 불필요.
-            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
+            // 단, 원문이 혼합(부분 번역)이면 그 언어로도 덮어쓸 항목이 있으므로 템플릿을 만든다.
+            if (!mod.HasMixedSource
+                && string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
             string key = language + "\0" + mod.Id;
             if (!_prepped.Add(key)) continue; // 이미 준비됨
             try { TranslationStore.EnsureTemplates(mod, language); wrote = true; }
@@ -280,7 +282,10 @@ public static class TranslationSync
             supportedIds.Add(mod.Id); // 게이트보다 먼저 — bundled 루프가 중복 주입하지 않게.
             // 이 모드의 실제 원문 언어로 플레이 중이면 원문 그대로가 정답 — 주입 스킵.
             // (한국어를 eng/ 에 담은 모드는 eng≠ContentLang 이라 eng 주입이 정상 진행된다.)
-            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
+            // 단, 원문이 혼합(부분 번역)이면 그 언어로 플레이해도 섞인 외국어 항목을 사용자 번역으로
+            // 덮어써야 하므로 주입을 진행한다(번역 안 한 항목은 원문값 그대로라 실질 무변경).
+            if (!mod.HasMixedSource
+                && string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
             // 이 대상 모드에 설치된 번역 모드가 제공한 (언어별) 번역.
             var bundledForMod = scan.Bundled.ForTargetLang(mod.Id, language);
 
