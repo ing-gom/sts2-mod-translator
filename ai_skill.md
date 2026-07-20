@@ -18,6 +18,7 @@ Everything below is relative to this folder. You do not need any path from the u
 ```
 supported_mods.txt        # report: which mods, which tables, coverage. START HERE.
 glossary_<lang>.txt       # official in-game term for each keyword, in <lang>
+glossary/<mod>/<lang>.txt # OPTIONAL: user's term list for this mod (names, mechanics)
 source/<mod>/<lang>/<table>.txt      # original text — READ ONLY, never edit
 overrides/<mod>/<lang>/<table>.txt   # your translation — edit these
 ```
@@ -114,7 +115,13 @@ glossary says `Vulnerable` → `취약`, never write `취약성` or `연약함`.
 If there is no `glossary_` file for your target language, none shipped for it — fall
 back to the keyword wording the game itself uses, and above all stay self-consistent.
 
-**Mod-defined keywords** — the glossary does not cover these, and they cross mod
+**Mod-specific terms** — if `glossary/<modId>/<lang>.txt` exists, it is the user's own
+term list for this mod (character names, unique mechanics): `{ "original": "translation" }`.
+Treat it as binding — whenever an entry's original contains one of these terms, its
+translation must use the mapped wording exactly. (The in-game editor flags entries that
+don't with a "term" marker.) The user maintains it, so honour it over your own guess.
+
+**Mod-defined keywords** — the game glossary does not cover these, and they cross mod
 boundaries. BaseLib defines `PURGE`; ArtoriaCaster references it as `*Anti/-Purge`.
 If BaseLib's title says one thing and ArtoriaCaster's card text says another, the
 in-game keyword tooltip silently stops matching.

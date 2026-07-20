@@ -45,6 +45,12 @@ public static class TranslatorPanel
     /// <summary>stale 키 → 번역 당시의 옛 원문(점프 시 무엇이 바뀌었는지 보여 주기 위함).</summary>
     private static Dictionary<string, string> _staleOldByKey = new(StringComparer.Ordinal);
 
+    private static Label? _termLbl;      // 용어집 불일치 항목 개수(편집기 헤더)
+    /// <summary>용어집 표기가 어긋난 키 집합("다음 용어 항목" 점프용).</summary>
+    private static HashSet<string> _termKeys = new(StringComparer.Ordinal);
+    /// <summary>용어 불일치 키 → "원문용어 → 기대표기" 안내(참조 헤더 표시용).</summary>
+    private static Dictionary<string, string> _termInfoByKey = new(StringComparer.Ordinal);
+
     private static View _view = View.Mods;
     private static SupportedMod? _mod;
     private static string _lang = "";
@@ -211,6 +217,9 @@ public static class TranslatorPanel
         _staleLbl = null;
         _staleKeys.Clear();
         _staleOldByKey.Clear();
+        _termLbl = null;
+        _termKeys.Clear();
+        _termInfoByKey.Clear();
 
         switch (_view)
         {
@@ -791,7 +800,7 @@ public static class TranslatorPanel
     {
         if (_mod == null) { Navigate(View.Mods); return; }
         var list = ScrollList();
-        int problems = 0, fmtProblems = 0, staleProblems = 0;
+        int problems = 0, fmtProblems = 0, staleProblems = 0, termProblems = 0;
         foreach (var table in _mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal))
         {
             var t = table;
@@ -802,6 +811,9 @@ public static class TranslatorPanel
                 : TranslationSync.InvalidFormatKeys(TranslationStore.OverrideText(_mod.Id, _lang, t)).Count;
             // 원문이 번역 당시와 달라진(=대상 모드 업데이트로 다시 번역해야 하는) 항목 개수.
             int stale = invalid ? 0 : TranslationStore.StaleKeys(_mod, _lang, t).Count;
+            // 용어집 표기가 어긋난(원문에 용어 있는데 번역엔 정식표기 없음) 항목 개수(키 기준 distinct).
+            int term = invalid ? 0
+                : TranslationStore.GlossaryIssues(_mod, _lang, t).Select(i => i.key).Distinct().Count();
 
             var row = new HBoxContainer();
             // 깨진 JSON/포맷은 빨간색 + 경고로 표시(해당 항목 번역 미적용 상태). 정상은 진행률만.
@@ -811,15 +823,17 @@ public static class TranslatorPanel
                     ? $"{t}.json     ⚠ JSON error — open & fix"
                     : $"{t}.json     {pct}%  ({tr}/{tot}){(tot > tr ? $"   ◦ {tot - tr} empty" : "")}"
                       + (stale > 0 ? $"   ⚠ {stale} source-changed" : "")
+                      + (term > 0 ? $"   ⚠ {term} term" : "")
                       + (badFmt > 0 ? $"   ⚠ {badFmt} bad {{format}}" : ""),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             };
-            // 우선순위: 미적용(빨강) > 원문변경(금색) > 정상(흰색).
+            // 우선순위: 미적용(빨강) > 원문변경·용어(금색) > 정상(흰색).
             lbl.AddThemeColorOverride("font_color",
-                invalid || badFmt > 0 ? RED : stale > 0 ? GOLD : WHITE);
+                invalid || badFmt > 0 ? RED : stale > 0 || term > 0 ? GOLD : WHITE);
             if (invalid) problems++;
             if (badFmt > 0) fmtProblems++;
             if (stale > 0) staleProblems++;
+            if (term > 0) termProblems++;
             row.AddChild(lbl);
             var edit = ActionButton("Edit"); edit.Pressed += () => { _table = t; Navigate(View.Editor); };
             var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(t);
@@ -840,13 +854,21 @@ public static class TranslatorPanel
                 msg += (msg.Length > 0 ? "  " : "")
                     + $"⚠ {staleProblems} file(s) have entries whose original text changed since you "
                     + "translated them — open & use \"Next changed ▼\" to re-check.";
+            if (termProblems > 0)
+                msg += (msg.Length > 0 ? "  " : "")
+                    + $"⚠ {termProblems} file(s) have entries that don't use a glossary term — "
+                    + "open & use \"Next term ▼\".";
             SetStatus(msg, true, true);
         }
-        else if (staleProblems > 0)
-            SetStatus(
-                $"⚠ {staleProblems} file(s) have entries whose original text changed since you translated "
-                + "them (the mod was updated). Open a file and use \"Next changed ▼\" to review just those.",
-                true, false);
+        else if (staleProblems > 0 || termProblems > 0)
+        {
+            var bits = new System.Collections.Generic.List<string>();
+            if (staleProblems > 0)
+                bits.Add($"{staleProblems} file(s) have entries whose original changed (\"Next changed ▼\")");
+            if (termProblems > 0)
+                bits.Add($"{termProblems} file(s) don't use a glossary term (\"Next term ▼\")");
+            SetStatus("⚠ " + string.Join("; ", bits) + ". Open a file to review.", true, false);
+        }
 
         var footer = new HBoxContainer();
         var mod = _mod; string lang = _lang;
@@ -870,8 +892,80 @@ public static class TranslatorPanel
                 SetStatus($"Reset all files for {lang}.", true, false);
                 RebuildContent();
             });
-        footer.AddChild(autoAll); footer.AddChild(resetAll);
+        var gloss = ActionButton("Glossary…");
+        gloss.CustomMinimumSize = new Vector2(140, 40);
+        gloss.TooltipText =
+            "Fix mod-specific terms (character names, unique mechanics) so they read the same everywhere.\n"
+            + "Entries that don't use a term you set here are flagged with \"Next term ▼\" in the editor.";
+        gloss.Pressed += () => OpenGlossaryDialog(mod, lang);
+        footer.AddChild(autoAll); footer.AddChild(gloss); footer.AddChild(resetAll);
         _content!.AddChild(footer);
+    }
+
+    /// <summary>
+    /// 모드별 사용자 용어집 편집 모달. 한 줄에 <c>원문 용어 = 번역 용어</c> 형식으로 자유 편집한다
+    /// (그리드 위젯 대신 텍스트라 저작이 빠르다). 저장 시 첫 '=' 로 나눠 파싱하고 파일 목록을 갱신한다.
+    /// </summary>
+    private static void OpenGlossaryDialog(SupportedMod mod, string lang)
+    {
+        if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+        var dlg = new AcceptDialog
+        {
+            Title = $"Glossary — {mod.Name} ({LangDisplay(lang)})",
+            OkButtonText = "Save",
+            MinSize = new Vector2I(680, 460),
+        };
+        var box = new VBoxContainer { SizeFlagsVertical = Control.SizeFlags.ExpandFill };
+        box.AddChild(Lbl("One term per line, as  original = translation  — e.g.", GRAY));
+        box.AddChild(Lbl("   Artoria = 아르토리아", GRAY));
+        box.AddChild(Lbl("Entries whose original contains the term but whose translation lacks yours are flagged.", GRAY));
+
+        var edit = new TextEdit
+        {
+            Text = GlossaryToText(TranslationStore.LoadModGlossary(mod.Id, lang)),
+            CustomMinimumSize = new Vector2(640, 340),
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+        };
+        box.AddChild(edit);
+        dlg.AddChild(box);
+
+        dlg.Confirmed += () =>
+        {
+            TranslationStore.SaveModGlossary(mod.Id, lang, ParseGlossaryText(edit.Text));
+            SetStatus("Glossary saved.", true, false);
+            if (_view == View.Files) RebuildContent();
+            else if (_view == View.Editor) { UpdateTermState(); }
+            if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree();
+        };
+        dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
+        _root.AddChild(dlg);
+        dlg.PopupCentered();
+    }
+
+    /// <summary>용어집 dict → 편집용 텍스트("원문 = 번역" 줄, 원문 정렬).</summary>
+    private static string GlossaryToText(System.Collections.Generic.Dictionary<string, string> gloss)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var kv in gloss.OrderBy(k => k.Key, StringComparer.Ordinal))
+            sb.Append(kv.Key).Append(" = ").Append(kv.Value).Append('\n');
+        return sb.ToString();
+    }
+
+    /// <summary>편집 텍스트 → 용어집 dict. 첫 '=' 로 분리, 빈 줄·'#' 주석 무시.</summary>
+    private static System.Collections.Generic.Dictionary<string, string> ParseGlossaryText(string text)
+    {
+        var d = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var raw in (text ?? "").Replace("\r", "").Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith("#")) continue;
+            int eq = line.IndexOf('=');
+            if (eq <= 0) continue;
+            string src = line.Substring(0, eq).Trim();
+            string tgt = line.Substring(eq + 1).Trim();
+            if (src.Length > 0 && tgt.Length > 0) d[src] = tgt; // 뒤 항목이 앞을 덮음(중복 키)
+        }
+        return d;
     }
 
     // ── 뷰: 편집기 ──────────────────────────────────────────
@@ -975,6 +1069,16 @@ public static class TranslatorPanel
             + "(the target mod was updated). The reference pane shows what it was translated from.";
         nextStale.Pressed += JumpToNextStale;
         ovHeader.AddChild(nextStale);
+        _termLbl = new Label();
+        _termLbl.AddThemeFontSizeOverride("font_size", 16);
+        ovHeader.AddChild(_termLbl);
+        var nextTerm = ActionButton("Next term ▼");
+        nextTerm.CustomMinimumSize = new Vector2(150, 36);
+        nextTerm.TooltipText =
+            "Jump to the next entry whose original uses a glossary term but whose\n"
+            + "translation doesn't use the term you set. Edit the glossary from the file list.";
+        nextTerm.Pressed += JumpToNextTerm;
+        ovHeader.AddChild(nextTerm);
         _emptyLbl = new Label();
         _emptyLbl.AddThemeFontSizeOverride("font_size", 16);
         ovHeader.AddChild(_emptyLbl);
@@ -1000,6 +1104,7 @@ public static class TranslatorPanel
         _editor.CaretChanged += SyncRefToCaret; // 캐럿이 놓인 키를 참조 패널이 따라온다
         ovCol.AddChild(_editor);
         UpdateStaleState(); // 원문 변경 항목 집합·카운트 계산(SyncRefToCaret 이 참조하기 전에)
+        UpdateTermState();  // 용어집 불일치 항목 집합·카운트
         UpdateEmptyCount();
         SyncRefToCaret(); // 열자마자 첫 항목을 맞춰 둔다
         panes.AddChild(ovCol);
@@ -1020,6 +1125,7 @@ public static class TranslatorPanel
         {
             if (_editor != null) _editor.Text = TranslationStore.OverrideText(_mod.Id, _lang, _table);
             UpdateStaleState();
+            UpdateTermState();
             UpdateEmptyCount();
             SetStatus("Reloaded from disk.", true, false);
         };
@@ -1035,6 +1141,7 @@ public static class TranslatorPanel
                 TranslationStore.ResetOverride(emod, elang, tbl);
                 if (_editor != null) _editor.Text = TranslationStore.OverrideText(emod.Id, elang, tbl);
                 UpdateStaleState();
+                UpdateTermState();
                 UpdateEmptyCount();
                 TranslationSync.ReloadFromDisk();
                 SetStatus("Reset to original.", true, false);
@@ -1096,15 +1203,18 @@ public static class TranslatorPanel
         else SetRefKey(key, missing: true, stale: stale); // 참조에 없는 키 — 패널은 두고 이유만 알린다
     }
 
-    /// <summary>참조 헤더의 "지금 이 키" 표시. missing=참조 언어에 없음. stale=원문이 번역 후 바뀜.</summary>
+    /// <summary>참조 헤더의 "지금 이 키" 표시. missing=참조 언어에 없음. stale=원문이 번역 후 바뀜.
+    /// 용어집 불일치면 기대 표기를 함께 안내(원문변경 다음 우선순위).</summary>
     private static void SetRefKey(string key, bool missing, bool stale = false)
     {
         if (_refKeyLbl == null || !GodotObject.IsInstanceValid(_refKeyLbl)) return;
+        bool term = !missing && !stale && _termInfoByKey.TryGetValue(key, out _);
         string suffix = missing ? "  — not in this reference"
                       : stale ? "  ⚠ original changed since you translated it"
+                      : term ? $"  ⚠ glossary: {_termInfoByKey[key]}"
                       : "";
         _refKeyLbl.Text = $"  {key}{suffix}";
-        _refKeyLbl.AddThemeColorOverride("font_color", missing || stale ? GOLD : WHITE);
+        _refKeyLbl.AddThemeColorOverride("font_color", missing || stale || term ? GOLD : WHITE);
     }
 
     // ── 원문 변경(stale) 내비게이터 ──────────────────────────────
@@ -1128,25 +1238,11 @@ public static class TranslatorPanel
         }
     }
 
-    /// <summary>stale(원문 변경) 항목 줄 목록 — 편집기 우측 값에서 키를 뽑아 stale 집합과 대조.</summary>
-    private static List<int> StaleEntryLines(TextEdit ed)
-    {
-        var lines = new List<int>();
-        if (_staleKeys.Count == 0) return lines;
-        int n = ed.GetLineCount();
-        for (int i = 0; i < n; i++)
-        {
-            var m = EntryKeyRx.Match(ed.GetLine(i));
-            if (m.Success && _staleKeys.Contains(m.Groups[1].Value)) lines.Add(i);
-        }
-        return lines;
-    }
-
     /// <summary>캐럿 다음의 stale 항목 줄로 점프(끝이면 처음으로 wrap). 옛 원문을 상태줄에 보여 준다.</summary>
     private static void JumpToNextStale()
     {
         if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
-        var lines = StaleEntryLines(_editor);
+        var lines = KeyLines(_editor, _staleKeys);
         if (lines.Count == 0)
         {
             SetStatus(
@@ -1162,9 +1258,15 @@ public static class TranslatorPanel
         _editor.CenterViewportToCaret();
         _editor.GrabFocus();
         var m = EntryKeyRx.Match(_editor.GetLine(next));
-        string was = m.Success && _staleOldByKey.TryGetValue(m.Groups[1].Value, out var old)
-            ? $"  Was translated from: \"{Ellipsize(old, 80)}\""
-            : "";
+        string was = "";
+        if (m.Success && _staleOldByKey.TryGetValue(m.Groups[1].Value, out var old))
+        {
+            string curSrc = _mod != null && _mod.EngByTable.TryGetValue(_table, out var e)
+                            && e.TryGetValue(m.Groups[1].Value, out var c) ? c : "";
+            string diff = SourceDiff.Describe(old, curSrc);
+            was = diff.Length > 0 ? $"  Original changed:  {diff}"
+                                  : $"  Was translated from: \"{Ellipsize(old, 80)}\"";
+        }
         SetStatus($"Source-changed {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}).{was}", true, false);
     }
 
@@ -1173,6 +1275,68 @@ public static class TranslatorPanel
     {
         s = s.Replace('\n', ' ').Replace('\r', ' ');
         return s.Length <= max ? s : s.Substring(0, max) + "…";
+    }
+
+    // ── 용어집 불일치 내비게이터 ─────────────────────────────────
+
+    /// <summary>용어집 불일치 키 집합·안내를 다시 계산하고 헤더 카운트를 갱신한다.</summary>
+    private static void UpdateTermState()
+    {
+        _termKeys = new HashSet<string>(StringComparer.Ordinal);
+        _termInfoByKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (_mod != null)
+            foreach (var (key, term, expected) in TranslationStore.GlossaryIssues(_mod, _lang, _table))
+            {
+                _termKeys.Add(key);
+                // 한 항목에 여러 용어가 걸릴 수 있다 — 첫 안내만 헤더에 보여 준다(나머지는 카운트로).
+                if (!_termInfoByKey.ContainsKey(key)) _termInfoByKey[key] = $"use \"{expected}\" for \"{term}\"";
+            }
+        if (_termLbl != null && GodotObject.IsInstanceValid(_termLbl))
+        {
+            int n = _termKeys.Count;
+            _termLbl.Text = n == 0 ? "" : $"⚠ {n} term  ";
+            _termLbl.AddThemeColorOverride("font_color", GOLD);
+        }
+    }
+
+    /// <summary>지정 키 집합에 속하는 항목 줄 목록(편집기 우측 값에서 키를 뽑아 대조).</summary>
+    private static List<int> KeyLines(TextEdit ed, HashSet<string> keys)
+    {
+        var lines = new List<int>();
+        if (keys.Count == 0) return lines;
+        int n = ed.GetLineCount();
+        for (int i = 0; i < n; i++)
+        {
+            var m = EntryKeyRx.Match(ed.GetLine(i));
+            if (m.Success && keys.Contains(m.Groups[1].Value)) lines.Add(i);
+        }
+        return lines;
+    }
+
+    /// <summary>캐럿 다음의 용어 불일치 항목으로 점프. 기대 표기를 상태줄에 안내.</summary>
+    private static void JumpToNextTerm()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        var lines = KeyLines(_editor, _termKeys);
+        if (lines.Count == 0)
+        {
+            SetStatus(
+                _mod != null && TranslationStore.LoadModGlossary(_mod.Id, _lang).Count == 0
+                    ? "No glossary set for this mod/language yet — add terms via \"Glossary…\" on the file list."
+                    : "No glossary mismatches here — every entry uses the terms you set.",
+                true, false);
+            return;
+        }
+        int cur = _editor.GetCaretLine();
+        int next = lines.FirstOrDefault(l => l > cur, lines[0]); // wrap-around
+        _editor.SetCaretLine(next);
+        int q = _editor.GetLine(next).LastIndexOf('"');
+        _editor.SetCaretColumn(Math.Max(0, q));
+        _editor.CenterViewportToCaret();
+        _editor.GrabFocus();
+        var m = EntryKeyRx.Match(_editor.GetLine(next));
+        string hint = m.Success && _termInfoByKey.TryGetValue(m.Groups[1].Value, out var h) ? $"  Glossary: {h}" : "";
+        SetStatus($"Term {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}).{hint}", true, false);
     }
 
     private static List<int> EmptyEntryLines(TextEdit ed)
@@ -1418,6 +1582,7 @@ public static class TranslatorPanel
         // 이 대상 모드를 "지금 버전 기준으로 번역했다"고 기록(이후 모드 업데이트 시 싱크 경고 기준).
         TranslationStore.RecordTargetVersion(_mod.Id, _mod.Version);
         UpdateStaleState(); // 방금 저장으로 (재)번역된 stale 항목은 목록에서 빠진다
+        UpdateTermState();  // 용어를 반영해 저장했으면 불일치가 해소된다
         var badKeys = TranslationSync.InvalidFormatKeys(_editor.Text);
         int n = TranslationSync.ReloadFromDisk();
         if (badKeys.Count > 0)

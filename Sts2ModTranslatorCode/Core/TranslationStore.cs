@@ -392,6 +392,62 @@ public static class TranslationStore
         return result;
     }
 
+    // ── 모드별 사용자 용어집(고유명사 고정) ─────────────────────
+
+    /// <summary>
+    /// glossary/{modId}/{lang}.txt — 이 모드·언어에서 <b>항상 이렇게 번역할 용어</b>(원문 용어 → 번역 용어).
+    /// 게임 키워드 글로서리(방어도/취약…, DLL 임베디드)와 달리 <b>모드 고유명사</b>(캐릭터 이름, 그 모드만의
+    /// 메커니즘)를 사용자가 직접 등록해 파일마다 표기가 흔들리지 않게 한다. Translations\ 안에 있으므로
+    /// AI 에이전트가 워크스페이스에서 바로 읽는다. 로컬 전용 — 내보내는 팩엔 포함되지 않는다.
+    /// </summary>
+    private static string ModGlossaryPath(string modId, string lang) =>
+        Path.Combine(Root, "glossary", modId, lang + DataExt);
+
+    /// <summary>이 모드·언어의 사용자 용어집(원문 용어 → 번역 용어). 없으면 빈 dict.</summary>
+    public static Dictionary<string, string> LoadModGlossary(string modId, string lang) =>
+        ReadJson(ModGlossaryPath(modId, lang));
+
+    /// <summary>사용자 용어집을 저장(빈 항목 정리·양끝 공백 제거). 비면 파일 삭제.</summary>
+    public static void SaveModGlossary(string modId, string lang, IReadOnlyDictionary<string, string> terms)
+    {
+        var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in terms)
+        {
+            string src = (kv.Key ?? "").Trim();
+            string tgt = (kv.Value ?? "").Trim();
+            if (src.Length > 0 && tgt.Length > 0) sorted[src] = tgt;
+        }
+        string p = ModGlossaryPath(modId, lang);
+        if (sorted.Count == 0) { try { if (File.Exists(p)) File.Delete(p); } catch { } return; }
+        WriteJson(p, sorted);
+    }
+
+    /// <summary>
+    /// 용어집 정합성 검사: 번역된 항목 중 <b>원문에 용어가 있는데 번역엔 정식 표기가 없는</b> 경우를
+    /// (키, 원문용어, 기대표기)로 반환한다. 표기 불일치(예: Vulnerable 원문인데 번역에 '취약'이 없음)를
+    /// 잡는다 — 기계번역이든 손번역이든 무관하게 동작(순수 문자열 대조). UI 의 "N term" 표시·점프에 쓴다.
+    /// </summary>
+    public static List<(string key, string term, string expected)> GlossaryIssues(
+        SupportedMod mod, string lang, string table)
+    {
+        var result = new List<(string, string, string)>();
+        var gloss = LoadModGlossary(mod.Id, lang);
+        if (gloss.Count == 0) return result;
+        if (!mod.EngByTable.TryGetValue(table, out var source)) return result;
+        foreach (var kv in LoadNonEmptyOverrides(mod.Id, lang, table))   // 키 → 번역
+        {
+            if (!source.TryGetValue(kv.Key, out var src) || !SupportedMod.IsTranslatable(src)) continue;
+            foreach (var g in gloss)
+            {
+                if (g.Value.Length == 0) continue;
+                if (src.IndexOf(g.Key, StringComparison.Ordinal) >= 0
+                    && kv.Value.IndexOf(g.Value, StringComparison.Ordinal) < 0)
+                    result.Add((kv.Key, g.Key, g.Value));
+            }
+        }
+        return result;
+    }
+
     // ── 대상 모드 버전 추적(싱크 감지) ──────────────────────────
 
     /// <summary>대상 모드 id → 마지막으로 번역했을 때의 대상 모드 버전. 로컬 전용(내보내는 팩엔 미포함).</summary>

@@ -330,6 +330,62 @@ internal static class SoloTest
                 TranslationStore.ClearRecordedTargetVersion(SMod);
             }
 
+            // ── 원문 단어 diff(SourceDiff) — 순수 알고리즘, 게임 무관 ───────────────
+            {
+                string d1 = SourceDiff.Describe("Deal 5 damage.", "Deal 8 damage.");
+                string d2 = SourceDiff.Describe("Deal 5 damage.", "Deal 5 damage.");
+                string d3 = SourceDiff.Describe("Gain Block.", "Gain 5 Block.");
+                string d4 = SourceDiff.Describe("Deal 5 fire damage.", "Deal 5 damage.");
+                if (!(d1.Contains("⟨5→8⟩") && d1.Contains("Deal") && d1.Contains("damage.")))
+                    W($"  SourceDiff d1='{d1}'");
+                if (d2.Length != 0) W($"  SourceDiff d2='{d2}' (expected empty)");
+                if (!d3.Contains("⟨+5⟩")) W($"  SourceDiff d3='{d3}' (expected +5 insert)");
+                if (!d4.Contains("⟨-")) W($"  SourceDiff d4='{d4}' (expected deletion)");
+                Assert(d1.Contains("⟨5→8⟩") && d1.Contains("Deal") && d1.Contains("damage.")
+                       && d2.Length == 0 && d3.Contains("⟨+5⟩") && d4.Contains("⟨-"),
+                    "SourceDiff word-level: replace / identical / insert / delete");
+            }
+
+            // ── 모드별 용어집 저장 + 정합성 검사(GlossaryIssues) ───────────────────
+            {
+                const string GMod = "ZZ_GlossarySelfTest";
+                const string GLang = "kor";
+                const string GTable = "cards";
+                var gmod = new SupportedMod { Id = GMod, Name = "Gloss", Version = "1.0.0", SourceLang = "eng" };
+                gmod.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>>
+                {
+                    [GTable] = new Dictionary<string, string>
+                    { ["A"] = "Apply Vulnerable to the enemy.", ["B"] = "Deal damage." }
+                };
+
+                // 용어집: Vulnerable → 취약.
+                TranslationStore.SaveModGlossary(GMod, GLang, new Dictionary<string, string> { ["Vulnerable"] = "취약" });
+                var loaded = TranslationStore.LoadModGlossary(GMod, GLang);
+                bool g0 = loaded.Count == 1 && loaded.TryGetValue("Vulnerable", out var gv) && gv == "취약";
+
+                // 번역이 정식 표기를 씀 → 불일치 없음.
+                TranslationStore.SaveOverrideText(GMod, GLang, GTable,
+                    "{\"A\":\"적에게 취약을 부여.\",\"B\":\"피해를 줍니다.\"}");
+                bool g1 = TranslationStore.GlossaryIssues(gmod, GLang, GTable).Count == 0;
+
+                // A 번역이 '취약'을 안 씀(원문엔 Vulnerable 있음) → A 만 플래그.
+                TranslationStore.SaveOverrideText(GMod, GLang, GTable,
+                    "{\"A\":\"적에게 약화를 부여.\",\"B\":\"피해를 줍니다.\"}");
+                var issues = TranslationStore.GlossaryIssues(gmod, GLang, GTable);
+                bool g2 = issues.Count == 1 && issues[0].key == "A"
+                          && issues[0].term == "Vulnerable" && issues[0].expected == "취약";
+
+                // 용어집 비우면 검사도 없음.
+                TranslationStore.SaveModGlossary(GMod, GLang, new Dictionary<string, string>());
+                bool g3 = TranslationStore.GlossaryIssues(gmod, GLang, GTable).Count == 0;
+
+                if (!(g0 && g1 && g2 && g3)) W($"  glossary detail: g0={g0} g1={g1} g2={g2} g3={g3}");
+                Assert(g0 && g1 && g2 && g3,
+                    "Mod glossary: save/load + flags entries missing the term, clears when emptied");
+
+                TranslationStore.ResetOverride(gmod, GLang, GTable); // 정리
+            }
+
             // ── UI 렌더 검증: 언어 목록 맨 위 '✎ original' 행이 실제로 그려지는가(v1.14.4) ──
             // BuildLanguages 는 solo 로직 assert 로는 안 타므로, 패널을 리플렉션으로 열어 언어뷰까지 몰고
             // 가 스크린샷을 남긴다. ContentLang=eng 모드(Black Souls 시나리오) 우선.
