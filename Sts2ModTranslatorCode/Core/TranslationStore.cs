@@ -244,6 +244,14 @@ public static class TranslationStore
         Path.Combine(OverrideDir(id, lang), table + DataExt);
 
     /// <summary>
+    /// baseline/{id}/{lang}/{table}.txt — 각 번역 키를 <b>마지막으로 번역했을 때의 원문 스냅샷</b>.
+    /// 대상 모드가 업데이트돼 원문이 바뀌면, 여기 저장된 값과 현재 원문을 비교해 "어느 항목의 원문이
+    /// 바뀌었는지"(=다시 번역해야 하는지)를 키 단위로 알아낸다. 로컬 전용 — 내보내는 팩엔 포함 안 됨.
+    /// </summary>
+    private static string BaselinePath(string id, string lang, string table) =>
+        Path.Combine(Root, "baseline", id, lang, table + DataExt);
+
+    /// <summary>
     /// 한 모드의 source(원문) 갱신 + override(번역칸) 템플릿 생성/증분.
     /// 기존 번역값은 보존하고, 모드 신규 키만 빈 값으로 추가한다.
     /// </summary>
@@ -273,6 +281,115 @@ public static class TranslationStore
             Directory.CreateDirectory(OverrideDir(mod.Id, lang));
             WriteJson(ovrPath, merged);
         }
+
+        // 3) baseline(원문 변경 감지 기준) 시드: baseline 이 아직 없고 현재 번역이 대상 모드의 지금
+        //    버전과 어긋나지 않았다면(=지금 원문 기준으로 번역됨) 현재 원문을 기준으로 스냅샷해 둔다.
+        //    이후 모드가 업데이트돼 원문이 바뀌면 그 항목만 "원문 변경"으로 잡힌다.
+        foreach (var (table, engDict) in mod.EngByTable)
+            SeedBaselineIfInSync(mod, lang, table, engDict);
+    }
+
+    // ── 원문 변경(stale) 감지: baseline 스냅샷 ──────────────────
+
+    /// <summary>
+    /// baseline 파일이 없을 때만, 현재 번역이 대상 모드의 현재 버전과 동기 상태(또는 버전 미상)면
+    /// 현재 원문을 baseline 으로 시드한다. 이미 out-of-sync 면 옛 원문을 알 수 없어 시드하지 않는다
+    /// (그 경우엔 버전 태그가 대신 "낡음"을 알린다). 이후엔 저장 시점마다 변경 키만 갱신된다.
+    /// </summary>
+    private static void SeedBaselineIfInSync(
+        SupportedMod mod, string lang, string table, IReadOnlyDictionary<string, string> source)
+    {
+        try
+        {
+            string path = BaselinePath(mod.Id, lang, table);
+            if (File.Exists(path)) return; // 이미 baseline 존재 — 건드리지 않음
+            string? rec = GetRecordedTargetVersion(mod.Id);
+            if (rec != null && !string.IsNullOrEmpty(mod.Version) && !SameVersion(rec, mod.Version))
+                return; // 이미 낡음 — 옛 원문을 알 수 없으니 시드 불가
+            var ov = LoadNonEmptyOverrides(mod.Id, lang, table);
+            if (ov.Count == 0) return; // 번역된 항목 없음 — baseline 불필요
+            var baseline = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var key in ov.Keys)
+                if (source.TryGetValue(key, out var s) && SupportedMod.IsTranslatable(s)) baseline[key] = s;
+            if (baseline.Count > 0) WriteJson(path, baseline);
+        }
+        catch { /* best-effort — 시드 실패해도 번역엔 영향 없음 */ }
+    }
+
+    /// <summary>
+    /// override 저장 시 baseline 을 갱신한다. 값이 <b>바뀐</b> 키만 현재 원문으로 다시 스냅샷하고
+    /// (=그 키를 방금 (재)번역했다는 뜻), 값이 그대로인 키의 baseline 은 건드리지 않는다 — 다른 키를
+    /// 저장했다고 해서 이 키의 "원문 변경" 표시가 사라지면 안 되기 때문. 번역을 지운 키는 제거.
+    /// </summary>
+    private static void UpdateBaselineOnWrite(
+        string modId, string lang, string table,
+        IReadOnlyDictionary<string, string> prev,
+        IReadOnlyDictionary<string, string> next,
+        IReadOnlyDictionary<string, string> source)
+    {
+        try
+        {
+            var baseline = ReadJson(BaselinePath(modId, lang, table));
+            bool changed = false;
+            foreach (var kv in next)
+            {
+                string key = kv.Key, nv = kv.Value ?? "";
+                string pv = prev.TryGetValue(key, out var p) ? p : "";
+                if (string.IsNullOrEmpty(nv))
+                {
+                    if (baseline.Remove(key)) changed = true;          // 번역 지움 → 기준 불필요
+                }
+                else if (nv != pv)
+                {
+                    // 방금 (재)번역함 → 현재 원문을 기준으로 스냅샷.
+                    if (source.TryGetValue(key, out var s) && SupportedMod.IsTranslatable(s))
+                    {
+                        if (!baseline.TryGetValue(key, out var b) || b != s) { baseline[key] = s; changed = true; }
+                    }
+                    else if (baseline.Remove(key)) changed = true;     // 원문이 빔 → 기준 없음
+                }
+                // 값이 그대로면 baseline 유지(원문 변경 상태 보존).
+            }
+            // override 에서 사라진 키의 baseline 정리.
+            foreach (var key in baseline.Keys.ToList())
+                if (!next.ContainsKey(key)) { baseline.Remove(key); changed = true; }
+            if (changed) WriteBaseline(modId, lang, table, baseline);
+        }
+        catch { /* best-effort */ }
+    }
+
+    private static void WriteBaseline(string modId, string lang, string table, Dictionary<string, string> baseline)
+    {
+        string path = BaselinePath(modId, lang, table);
+        if (baseline.Count == 0) { ClearBaseline(modId, lang, table); return; }
+        WriteJson(path, new SortedDictionary<string, string>(baseline, StringComparer.Ordinal));
+    }
+
+    private static void ClearBaseline(string modId, string lang, string table)
+    {
+        try { string p = BaselinePath(modId, lang, table); if (File.Exists(p)) File.Delete(p); }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
+    /// 원문이 <b>바뀐</b>(번역 당시 기준과 달라진) 번역 키 목록. 각 항목 = (키, 번역 당시 원문, 현재 원문).
+    /// baseline 이 있는 키만 판정 — 없으면 '알 수 없음'으로 조용히 통과(헛경고 방지). 번역이 비어 있으면
+    /// (미번역) 제외. UI 의 "원문 변경" 표시·"다음 변경 항목" 점프에 쓴다.
+    /// </summary>
+    public static List<(string key, string oldSource, string newSource)> StaleKeys(
+        SupportedMod mod, string lang, string table)
+    {
+        var result = new List<(string, string, string)>();
+        var baseline = ReadJson(BaselinePath(mod.Id, lang, table));
+        if (baseline.Count == 0) return result;
+        var source = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
+        foreach (var kv in LoadNonEmptyOverrides(mod.Id, lang, table))
+        {
+            if (!baseline.TryGetValue(kv.Key, out var old)) continue;   // 기준 없음 → 판단 불가
+            if (!source.TryGetValue(kv.Key, out var cur) || !SupportedMod.IsTranslatable(cur)) continue;
+            if (!string.Equals(old, cur, StringComparison.Ordinal)) result.Add((kv.Key, old, cur));
+        }
+        return result;
     }
 
     // ── 대상 모드 버전 추적(싱크 감지) ──────────────────────────
@@ -448,17 +565,28 @@ public static class TranslationStore
         catch { return "{}"; }
     }
 
-    /// <summary>편집기 텍스트를 검증(JSON object) 후 override 로 저장. (성공여부, 오류메시지).</summary>
-    public static (bool ok, string error) SaveOverrideText(string modId, string lang, string table, string text)
+    /// <summary>
+    /// 편집기 텍스트를 검증(JSON object) 후 override 로 저장. (성공여부, 오류메시지).
+    /// <paramref name="source"/>(=이 테이블의 현재 원문 dict)을 주면 baseline(원문 변경 감지 기준)도
+    /// 함께 갱신한다 — 값이 바뀐 키만 현재 원문으로 스냅샷. null 이면 baseline 은 건드리지 않는다.
+    /// </summary>
+    public static (bool ok, string error) SaveOverrideText(
+        string modId, string lang, string table, string text,
+        IReadOnlyDictionary<string, string>? source = null)
     {
+        Dictionary<string, string>? d;
         try
         {
-            var d = JsonSerializer.Deserialize<Dictionary<string, string>>(text);
+            d = JsonSerializer.Deserialize<Dictionary<string, string>>(text);
             if (d == null) return (false, "JSON 최상위가 객체가 아닙니다");
         }
         catch (Exception ex) { return (false, "JSON 파싱 오류: " + ex.Message); }
-        try { WriteRaw(OverridePath(modId, lang, table), text); return (true, ""); }
+        // 저장 직전 이전 override 를 읽어 둔다(변경된 키만 baseline 을 갱신하기 위함).
+        var prev = source != null ? ReadJson(OverridePath(modId, lang, table)) : null;
+        try { WriteRaw(OverridePath(modId, lang, table), text); }
         catch (Exception ex) { return (false, ex.Message); }
+        if (source != null) UpdateBaselineOnWrite(modId, lang, table, prev!, d, source);
+        return (true, "");
     }
 
     /// <summary>한 테이블의 override 를 소스 키 + 빈 값으로 덮어쓴다(= 전부 원문 복귀).</summary>
@@ -468,6 +596,7 @@ public static class TranslationStore
         var empty = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (var k in eng.Keys) empty[k] = "";
         WriteJson(OverridePath(mod.Id, lang, table), empty);
+        ClearBaseline(mod.Id, lang, table); // 번역을 지웠으니 원문 변경 기준도 제거
     }
 
     /// <summary>한 모드/언어의 모든 테이블 override 를 초기화.</summary>
@@ -476,8 +605,11 @@ public static class TranslationStore
         foreach (var table in mod.EngByTable.Keys) ResetOverride(mod, lang, table);
     }
 
-    /// <summary>외부 JSON 파일을 업로드: 템플릿 키는 유지하고 일치하는 값만 반영. (성공여부, 오류).</summary>
-    public static (bool ok, string error) ImportInto(string modId, string lang, string table, string externalPath)
+    /// <summary>외부 JSON 파일을 업로드: 템플릿 키는 유지하고 일치하는 값만 반영. (성공여부, 오류).
+    /// <paramref name="source"/>(현재 원문 dict)을 주면 baseline(원문 변경 감지 기준)도 함께 갱신한다.</summary>
+    public static (bool ok, string error) ImportInto(
+        string modId, string lang, string table, string externalPath,
+        IReadOnlyDictionary<string, string>? source = null)
     {
         Dictionary<string, string>? ext;
         try
@@ -490,13 +622,14 @@ public static class TranslationStore
 
         try
         {
-            var cur = ReadJson(OverridePath(modId, lang, table)); // 템플릿(키 집합)
+            var cur = ReadJson(OverridePath(modId, lang, table)); // 템플릿(키 집합) = 이전 override
             var merged = new SortedDictionary<string, string>(StringComparer.Ordinal);
             if (cur.Count > 0)
                 foreach (var k in cur.Keys) merged[k] = ext.TryGetValue(k, out var v) ? v : cur[k];
             else
                 foreach (var kv in ext) merged[kv.Key] = kv.Value; // 템플릿 없으면 업로드 그대로
             WriteJson(OverridePath(modId, lang, table), merged);
+            if (source != null) UpdateBaselineOnWrite(modId, lang, table, cur, merged, source);
             return (true, "");
         }
         catch (Exception ex) { return (false, ex.Message); }

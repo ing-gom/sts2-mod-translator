@@ -188,7 +188,7 @@ public static class AutoTranslator
 
             if (n > 0)
             {
-                TranslationStore.SaveOverrideText(mod.Id, lang, table, TranslationStore.ToPrettyJson(cur));
+                TranslationStore.SaveOverrideText(mod.Id, lang, table, TranslationStore.ToPrettyJson(cur), eng);
                 total += n; files++;
             }
         }

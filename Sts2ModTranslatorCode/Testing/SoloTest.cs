@@ -281,6 +281,55 @@ internal static class SoloTest
                 TranslationStore.SaveOverrideText(OrigMod, "kor", Table, "{}");
             }
 
+            // ── 원문 변경(stale) 감지 — baseline 스냅샷 vs 현재 원문 ─────────────
+            // 게임 없이 결정적으로: 번역 저장 시 baseline 이 기록되고, 원문이 바뀐 항목만 stale 로
+            // 잡히며, 무관한 키를 저장해도 낡음이 유지되고, 재번역하면 해소되는지 검증한다.
+            {
+                const string SMod = "ZZ_StaleSelfTest";
+                const string SLang = "kor";
+                const string STable = "cards";
+                var srcV1 = new Dictionary<string, string> { ["A"] = "Deal 5 damage.", ["B"] = "Gain 5 block." };
+                var modV1 = new SupportedMod { Id = SMod, Name = "Stale", Version = "1.0.0", SourceLang = "eng" };
+                modV1.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>> { [STable] = srcV1 };
+
+                // 이전 실행 잔재 제거(override + baseline).
+                TranslationStore.ResetOverride(modV1, SLang, STable);
+                TranslationStore.ClearRecordedTargetVersion(SMod);
+
+                // A·B 를 v1 원문 기준으로 번역 → baseline 이 srcV1 을 기록.
+                TranslationStore.SaveOverrideText(SMod, SLang, STable,
+                    "{\"A\":\"5 피해.\",\"B\":\"5 방어도.\"}", srcV1);
+                bool st0 = TranslationStore.StaleKeys(modV1, SLang, STable).Count == 0; // 원문 그대로 → 없음
+
+                // 모드 업데이트: A 의 원문이 바뀌고 B 는 그대로.
+                var srcV2 = new Dictionary<string, string> { ["A"] = "Deal 8 damage.", ["B"] = "Gain 5 block." };
+                var modV2 = new SupportedMod { Id = SMod, Name = "Stale", Version = "1.1.0", SourceLang = "eng" };
+                modV2.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>> { [STable] = srcV2 };
+                var stale1 = TranslationStore.StaleKeys(modV2, SLang, STable);
+                bool st1 = stale1.Count == 1 && stale1[0].key == "A"
+                           && stale1[0].oldSource == "Deal 5 damage." && stale1[0].newSource == "Deal 8 damage.";
+
+                // 무관한 키(B)만 편집·저장 → A 는 여전히 stale(건드리지 않았으므로 낡음 유지).
+                TranslationStore.SaveOverrideText(SMod, SLang, STable,
+                    "{\"A\":\"5 피해.\",\"B\":\"5 방어도 획득.\"}", srcV2);
+                var stale2 = TranslationStore.StaleKeys(modV2, SLang, STable);
+                bool st2 = stale2.Count == 1 && stale2[0].key == "A";
+
+                // A 를 새 원문 기준으로 재번역·저장 → A 해소.
+                TranslationStore.SaveOverrideText(SMod, SLang, STable,
+                    "{\"A\":\"8 피해.\",\"B\":\"5 방어도 획득.\"}", srcV2);
+                bool st3 = TranslationStore.StaleKeys(modV2, SLang, STable).Count == 0;
+
+                if (!(st0 && st1 && st2 && st3))
+                    W($"  stale detail: st0={st0} st1={st1} st2={st2} st3={st3}");
+                Assert(st0 && st1 && st2 && st3,
+                    "StaleKeys detects changed source, survives unrelated save, clears on re-translate");
+
+                // 정리.
+                TranslationStore.ResetOverride(modV2, SLang, STable);
+                TranslationStore.ClearRecordedTargetVersion(SMod);
+            }
+
             // ── UI 렌더 검증: 언어 목록 맨 위 '✎ original' 행이 실제로 그려지는가(v1.14.4) ──
             // BuildLanguages 는 solo 로직 assert 로는 안 타므로, 패널을 리플렉션으로 열어 언어뷰까지 몰고
             // 가 스크린샷을 남긴다. ContentLang=eng 모드(Black Souls 시나리오) 우선.

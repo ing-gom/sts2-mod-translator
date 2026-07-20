@@ -38,6 +38,14 @@ Open any mod and the language list starts with an **✎ edit this mod's own text
 
 If a mod's source folder actually *mixes* two languages (e.g. an English folder with some entries still in Chinese, or a Chinese mod with a few Korean/Japanese lines left over), it's tagged **"partly translated — mixed source"**, its row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. Detection is per-entry and language-aware — it catches CJK↔Latin mixes as well as CJK↔CJK (Chinese vs Korean/Japanese), and flags as soon as two or more entries are in a different language than the rest (ratio doesn't matter). The left reference pane and **Next empty ▼** help you find them.
 
+### When a mod updates
+
+Mods change. When the mod you translated ships a new version, its row is tagged **⚠ out of sync**, but that only tells you *something* moved — not *what*. This mod also tracks, per entry, the exact original text you translated each line **from**. When a mod update rewrites some card or event, only those specific entries are flagged **source-changed** — everything you translated that still matches is left alone.
+
+- The file list shows `⚠ N source-changed` per file; open one and a **Next changed ▼** button jumps straight to each entry whose original moved. The status bar shows what it *was* translated from, and the left reference pane shows the current original — so you can see exactly what changed and fix just that line.
+- Re-translate the entry and save, and the flag clears for that line. Editing an unrelated line never clears another line's flag.
+- This is forward-looking: it starts tracking from the version you have installed now, so a mod that updates *after* you translate it is caught precisely, entry by entry.
+
 ### Machine-translation drafts (DeepL)
 
 To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:

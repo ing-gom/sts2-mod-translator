@@ -35,9 +35,15 @@ public static class TranslatorPanel
     private static Label? _refKeyLbl;    // 지금 편집 중인 키 표시(참조 패널 헤더)
     private static Label? _status;
     private static Label? _emptyLbl;
+    private static Label? _staleLbl;     // 원문 변경(stale) 항목 개수 표시(편집기 헤더)
 
     /// <summary>참조 패널의 키 → 줄 번호. 참조 텍스트가 바뀔 때만 다시 만든다.</summary>
     private static Dictionary<string, int> _refLineByKey = new(StringComparer.Ordinal);
+
+    /// <summary>원문이 번역 당시와 달라진 키 집합(편집기에서 "다음 변경 항목" 점프·헤더 표시용).</summary>
+    private static HashSet<string> _staleKeys = new(StringComparer.Ordinal);
+    /// <summary>stale 키 → 번역 당시의 옛 원문(점프 시 무엇이 바뀌었는지 보여 주기 위함).</summary>
+    private static Dictionary<string, string> _staleOldByKey = new(StringComparer.Ordinal);
 
     private static View _view = View.Mods;
     private static SupportedMod? _mod;
@@ -202,6 +208,9 @@ public static class TranslatorPanel
         _refKeyLbl = null;
         _refLineByKey.Clear();
         _emptyLbl = null;
+        _staleLbl = null;
+        _staleKeys.Clear();
+        _staleOldByKey.Clear();
 
         switch (_view)
         {
@@ -782,7 +791,7 @@ public static class TranslatorPanel
     {
         if (_mod == null) { Navigate(View.Mods); return; }
         var list = ScrollList();
-        int problems = 0, fmtProblems = 0;
+        int problems = 0, fmtProblems = 0, staleProblems = 0;
         foreach (var table in _mod.EngByTable.Keys.OrderBy(t => t, StringComparer.Ordinal))
         {
             var t = table;
@@ -791,6 +800,8 @@ public static class TranslatorPanel
             // SmartFormat 문법이 깨진 값(JSON 으로는 유효 — 기존 JSON 경고에 안 잡힘) 개수.
             int badFmt = invalid ? 0
                 : TranslationSync.InvalidFormatKeys(TranslationStore.OverrideText(_mod.Id, _lang, t)).Count;
+            // 원문이 번역 당시와 달라진(=대상 모드 업데이트로 다시 번역해야 하는) 항목 개수.
+            int stale = invalid ? 0 : TranslationStore.StaleKeys(_mod, _lang, t).Count;
 
             var row = new HBoxContainer();
             // 깨진 JSON/포맷은 빨간색 + 경고로 표시(해당 항목 번역 미적용 상태). 정상은 진행률만.
@@ -799,12 +810,16 @@ public static class TranslatorPanel
                 Text = invalid
                     ? $"{t}.json     ⚠ JSON error — open & fix"
                     : $"{t}.json     {pct}%  ({tr}/{tot}){(tot > tr ? $"   ◦ {tot - tr} empty" : "")}"
+                      + (stale > 0 ? $"   ⚠ {stale} source-changed" : "")
                       + (badFmt > 0 ? $"   ⚠ {badFmt} bad {{format}}" : ""),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             };
-            lbl.AddThemeColorOverride("font_color", invalid || badFmt > 0 ? RED : WHITE);
+            // 우선순위: 미적용(빨강) > 원문변경(금색) > 정상(흰색).
+            lbl.AddThemeColorOverride("font_color",
+                invalid || badFmt > 0 ? RED : stale > 0 ? GOLD : WHITE);
             if (invalid) problems++;
             if (badFmt > 0) fmtProblems++;
+            if (stale > 0) staleProblems++;
             row.AddChild(lbl);
             var edit = ActionButton("Edit"); edit.Pressed += () => { _table = t; Navigate(View.Editor); };
             var up = ActionButton("Upload"); up.Pressed += () => OpenUploadDialog(t);
@@ -821,8 +836,17 @@ public static class TranslatorPanel
                 msg += (msg.Length > 0 ? "  " : "")
                     + $"⚠ {fmtProblems} file(s) contain entries with invalid {{format}} syntax "
                     + "(unbalanced braces?) — those entries are NOT applied. Open & fix, then Save.";
+            if (staleProblems > 0)
+                msg += (msg.Length > 0 ? "  " : "")
+                    + $"⚠ {staleProblems} file(s) have entries whose original text changed since you "
+                    + "translated them — open & use \"Next changed ▼\" to re-check.";
             SetStatus(msg, true, true);
         }
+        else if (staleProblems > 0)
+            SetStatus(
+                $"⚠ {staleProblems} file(s) have entries whose original text changed since you translated "
+                + "them (the mod was updated). Open a file and use \"Next changed ▼\" to review just those.",
+                true, false);
 
         var footer = new HBoxContainer();
         var mod = _mod; string lang = _lang;
@@ -936,11 +960,21 @@ public static class TranslatorPanel
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
         };
-        // 헤더: 제목 + 빈 항목 카운트 + '다음 빈 항목' 점프(자동 채우기가 건너뛴 곳 찾기용).
+        // 헤더: 제목 + 빈 항목/원문변경 카운트 + '다음 빈 항목'·'다음 변경 항목' 점프.
         var ovHeader = new HBoxContainer();
         var ovTitle = Lbl($"Translation ({_lang})", GOLD);
         ovTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         ovHeader.AddChild(ovTitle);
+        _staleLbl = new Label();
+        _staleLbl.AddThemeFontSizeOverride("font_size", 16);
+        ovHeader.AddChild(_staleLbl);
+        var nextStale = ActionButton("Next changed ▼");
+        nextStale.CustomMinimumSize = new Vector2(170, 36);
+        nextStale.TooltipText =
+            "Jump to the next entry whose ORIGINAL text changed since you translated it\n"
+            + "(the target mod was updated). The reference pane shows what it was translated from.";
+        nextStale.Pressed += JumpToNextStale;
+        ovHeader.AddChild(nextStale);
         _emptyLbl = new Label();
         _emptyLbl.AddThemeFontSizeOverride("font_size", 16);
         ovHeader.AddChild(_emptyLbl);
@@ -965,6 +999,7 @@ public static class TranslatorPanel
         _editor.TextChanged += UpdateEmptyCount;
         _editor.CaretChanged += SyncRefToCaret; // 캐럿이 놓인 키를 참조 패널이 따라온다
         ovCol.AddChild(_editor);
+        UpdateStaleState(); // 원문 변경 항목 집합·카운트 계산(SyncRefToCaret 이 참조하기 전에)
         UpdateEmptyCount();
         SyncRefToCaret(); // 열자마자 첫 항목을 맞춰 둔다
         panes.AddChild(ovCol);
@@ -984,6 +1019,7 @@ public static class TranslatorPanel
         var reload = ActionButton("Reload File"); reload.Pressed += () =>
         {
             if (_editor != null) _editor.Text = TranslationStore.OverrideText(_mod.Id, _lang, _table);
+            UpdateStaleState();
             UpdateEmptyCount();
             SetStatus("Reloaded from disk.", true, false);
         };
@@ -998,6 +1034,7 @@ public static class TranslatorPanel
             {
                 TranslationStore.ResetOverride(emod, elang, tbl);
                 if (_editor != null) _editor.Text = TranslationStore.OverrideText(emod.Id, elang, tbl);
+                UpdateStaleState();
                 UpdateEmptyCount();
                 TranslationSync.ReloadFromDisk();
                 SetStatus("Reset to original.", true, false);
@@ -1049,21 +1086,93 @@ public static class TranslatorPanel
         var m = EntryKeyRx.Match(_editor.GetLine(_editor.GetCaretLine()));
         if (!m.Success) return; // 여는 중괄호·빈 줄 등 — 마지막 상태 유지
         string key = m.Groups[1].Value;
+        bool stale = _staleKeys.Contains(key);
         if (_refLineByKey.TryGetValue(key, out int line))
         {
             _srcEdit.SetCaretLine(line);           // 현재 줄 하이라이트 = 어느 항목인지 눈에 보이게
             _srcEdit.SetLineAsCenterVisible(line);
-            SetRefKey(key, missing: false);
+            SetRefKey(key, missing: false, stale: stale);
         }
-        else SetRefKey(key, missing: true); // 참조에 없는 키 — 패널은 두고 이유만 알린다
+        else SetRefKey(key, missing: true, stale: stale); // 참조에 없는 키 — 패널은 두고 이유만 알린다
     }
 
-    /// <summary>참조 헤더의 "지금 이 키" 표시. missing=참조 언어에 그 키가 아예 없음.</summary>
-    private static void SetRefKey(string key, bool missing)
+    /// <summary>참조 헤더의 "지금 이 키" 표시. missing=참조 언어에 없음. stale=원문이 번역 후 바뀜.</summary>
+    private static void SetRefKey(string key, bool missing, bool stale = false)
     {
         if (_refKeyLbl == null || !GodotObject.IsInstanceValid(_refKeyLbl)) return;
-        _refKeyLbl.Text = missing ? $"  {key}  — not in this reference" : $"  {key}";
-        _refKeyLbl.AddThemeColorOverride("font_color", missing ? GOLD : WHITE);
+        string suffix = missing ? "  — not in this reference"
+                      : stale ? "  ⚠ original changed since you translated it"
+                      : "";
+        _refKeyLbl.Text = $"  {key}{suffix}";
+        _refKeyLbl.AddThemeColorOverride("font_color", missing || stale ? GOLD : WHITE);
+    }
+
+    // ── 원문 변경(stale) 내비게이터 ──────────────────────────────
+
+    /// <summary>편집기의 stale 키 집합·옛 원문을 다시 계산하고 헤더 카운트를 갱신한다.</summary>
+    private static void UpdateStaleState()
+    {
+        _staleKeys = new HashSet<string>(StringComparer.Ordinal);
+        _staleOldByKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (_mod != null)
+            foreach (var (key, old, _) in TranslationStore.StaleKeys(_mod, _lang, _table))
+            {
+                _staleKeys.Add(key);
+                _staleOldByKey[key] = old;
+            }
+        if (_staleLbl != null && GodotObject.IsInstanceValid(_staleLbl))
+        {
+            int n = _staleKeys.Count;
+            _staleLbl.Text = n == 0 ? "" : $"⚠ {n} changed  ";
+            _staleLbl.AddThemeColorOverride("font_color", GOLD);
+        }
+    }
+
+    /// <summary>stale(원문 변경) 항목 줄 목록 — 편집기 우측 값에서 키를 뽑아 stale 집합과 대조.</summary>
+    private static List<int> StaleEntryLines(TextEdit ed)
+    {
+        var lines = new List<int>();
+        if (_staleKeys.Count == 0) return lines;
+        int n = ed.GetLineCount();
+        for (int i = 0; i < n; i++)
+        {
+            var m = EntryKeyRx.Match(ed.GetLine(i));
+            if (m.Success && _staleKeys.Contains(m.Groups[1].Value)) lines.Add(i);
+        }
+        return lines;
+    }
+
+    /// <summary>캐럿 다음의 stale 항목 줄로 점프(끝이면 처음으로 wrap). 옛 원문을 상태줄에 보여 준다.</summary>
+    private static void JumpToNextStale()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        var lines = StaleEntryLines(_editor);
+        if (lines.Count == 0)
+        {
+            SetStatus(
+                "No source-changed entries here — every translation still matches the current original.",
+                true, false);
+            return;
+        }
+        int cur = _editor.GetCaretLine();
+        int next = lines.FirstOrDefault(l => l > cur, lines[0]); // wrap-around
+        _editor.SetCaretLine(next);
+        int q = _editor.GetLine(next).LastIndexOf('"');
+        _editor.SetCaretColumn(Math.Max(0, q));
+        _editor.CenterViewportToCaret();
+        _editor.GrabFocus();
+        var m = EntryKeyRx.Match(_editor.GetLine(next));
+        string was = m.Success && _staleOldByKey.TryGetValue(m.Groups[1].Value, out var old)
+            ? $"  Was translated from: \"{Ellipsize(old, 80)}\""
+            : "";
+        SetStatus($"Source-changed {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}).{was}", true, false);
+    }
+
+    /// <summary>상태줄 표시용으로 긴 문자열을 자른다(줄바꿈은 공백으로).</summary>
+    private static string Ellipsize(string s, int max)
+    {
+        s = s.Replace('\n', ' ').Replace('\r', ' ');
+        return s.Length <= max ? s : s.Substring(0, max) + "…";
     }
 
     private static List<int> EmptyEntryLines(TextEdit ed)
@@ -1303,10 +1412,12 @@ public static class TranslatorPanel
     private static void SaveEditor()
     {
         if (_mod == null || _editor == null) return;
-        var (ok, err) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text);
+        var src = _mod.EngByTable.TryGetValue(_table, out var e) ? e : null;
+        var (ok, err) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text, src);
         if (!ok) { SetStatus("Save failed: " + err, true, true); return; }
         // 이 대상 모드를 "지금 버전 기준으로 번역했다"고 기록(이후 모드 업데이트 시 싱크 경고 기준).
         TranslationStore.RecordTargetVersion(_mod.Id, _mod.Version);
+        UpdateStaleState(); // 방금 저장으로 (재)번역된 stale 항목은 목록에서 빠진다
         var badKeys = TranslationSync.InvalidFormatKeys(_editor.Text);
         int n = TranslationSync.ReloadFromDisk();
         if (badKeys.Count > 0)
@@ -1341,9 +1452,10 @@ public static class TranslatorPanel
         };
         dlg.AddFilter("*.json", "JSON");
         string mid = _mod.Id, lang = _lang, t = table, ver = _mod.Version;
+        var src = _mod.EngByTable.TryGetValue(table, out var e) ? e : null;
         dlg.FileSelected += (string path) =>
         {
-            var (ok, err) = TranslationStore.ImportInto(mid, lang, t, path);
+            var (ok, err) = TranslationStore.ImportInto(mid, lang, t, path, src);
             if (ok)
             {
                 TranslationStore.RecordTargetVersion(mid, ver); // 번역 기준 버전 기록
