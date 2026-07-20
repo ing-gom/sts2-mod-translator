@@ -36,7 +36,7 @@ Open any mod and the language list starts with an **✎ edit this mod's own text
 
 *(This row edits whatever language the mod's source folder is written in — it doesn't assume that language is the mod's "original". If a mod also ships another language you'd rather edit, that language is just a normal row lower in the list.)*
 
-If a mod's source folder actually *mixes* two scripts (e.g. an English folder with some entries still in Chinese), it's tagged **"partly translated — mixed source"**, its row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. The left reference pane and **Next empty ▼** help you find them.
+If a mod's source folder actually *mixes* two languages (e.g. an English folder with some entries still in Chinese, or a Chinese mod with a few Korean/Japanese lines left over), it's tagged **"partly translated — mixed source"**, its row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. Detection is per-entry and language-aware — it catches CJK↔Latin mixes as well as CJK↔CJK (Chinese vs Korean/Japanese), and flags as soon as two or more entries are in a different language than the rest (ratio doesn't matter). The left reference pane and **Next empty ▼** help you find them.
 
 ### Machine-translation drafts (DeepL)
 

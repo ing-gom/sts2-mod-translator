@@ -188,23 +188,38 @@ internal static class SoloTest
             }
             Assert(detPass == detCases.Length, $"CJK content-language detection {detPass}/{detCases.Length}");
 
-            // ── 혼합(부분 번역) 원문 감지 — Black Souls 케이스 ───────────
-            // 대부분 영어 + 일부 중국어인 원문(eng 폴더)에서 ContentLang=eng, HasMixedSource=true 여야
-            // 영어를 대상으로 골라 섞인 중국어 항목을 덮어쓸 수 있다.
-            static Dictionary<string, Dictionary<string, string>> Mix(int engN, int zhN)
+            // ── 혼합(부분 번역) 원문 감지 — CJK↔라틴 + CJK끼리, 비율 무관(외국 항목 ≥2) ──────
+            // 각 항목을 우세 언어로 분류(한글=한국어·가나=일본어·순수한자=중국어·라틴=영어권)한 뒤
+            // ContentLang 과 다른 언어 항목이 2개 이상이면 mixed. 한자-only 는 中日 애매라 일본어 모드에선 미계상.
+            static Dictionary<string, Dictionary<string, string>> Bld(params (string lang, int n)[] parts)
             {
+                static string Sample(string lang) => lang switch
+                {
+                    "eng" => "Deal damage to the enemy and gain block.",  // 라틴
+                    "zhs" => "对敌人造成伤害并获得格挡。",                    // 순수 한자
+                    "kor" => "적에게 피해를 주고 방어도를 얻는다.",           // 한글 우세
+                    "jpn" => "敵にダメージを与えてブロックを得る。",          // 가나 포함 = 일본어
+                    "han" => "攻撃力上昇値界",                              // 한자-only(中日 애매)
+                    _ => "?",
+                };
                 var inner = new Dictionary<string, string>();
-                for (int i = 0; i < engN; i++) inner["e" + i] = "Deal damage to the enemy and gain block.";
-                for (int i = 0; i < zhN; i++) inner["z" + i] = "对敌人造成伤害并获得格挡。";
+                int idx = 0;
+                foreach (var (lang, n) in parts)
+                    for (int i = 0; i < n; i++) inner[$"{lang}{idx++}"] = Sample(lang);
                 return new Dictionary<string, Dictionary<string, string>> { ["cards"] = inner };
             }
             (Dictionary<string, Dictionary<string, string>> tbl, string folder, string lang, bool mixed, string what)[] mixCases =
             {
-                (Mix(20, 6), "eng", "eng", true,  "eng + 23% chinese entries -> eng, mixed"),
-                (Mix(30, 0), "eng", "eng", false, "pure english -> eng, not mixed"),
-                (Mix(60, 2), "eng", "eng", false, "eng + 2 stray chinese entries -> not mixed (below floor)"),
-                (Mix(0, 20), "zhs", "zhs", false, "pure chinese -> zhs, not mixed"),
-                (Mix(8, 20), "zhs", "zhs", true,  "chinese + ~29% english entries -> zhs, mixed"),
+                (Bld(("eng",20),("zhs",6)),  "eng", "eng", true,  "eng + chinese -> mixed"),
+                (Bld(("eng",30)),            "eng", "eng", false, "pure english -> not mixed"),
+                (Bld(("eng",60),("zhs",1)),  "eng", "eng", false, "eng + 1 chinese -> not mixed (floor 2)"),
+                (Bld(("eng",60),("zhs",2)),  "eng", "eng", true,  "eng + 2 chinese -> mixed (low ratio caught)"),
+                (Bld(("zhs",20)),            "zhs", "zhs", false, "pure chinese -> not mixed"),
+                (Bld(("zhs",100),("jpn",3)), "zhs", "zhs", true,  "chinese + japanese(kana) -> mixed (CJK vs CJK)"),
+                (Bld(("zhs",40),("kor",3)),  "zhs", "zhs", true,  "chinese + korean(hangul) -> mixed (CJK vs CJK)"),
+                (Bld(("kor",30),("zhs",4)),  "kor", "kor", true,  "korean + chinese(hanja) -> mixed (CJK vs CJK)"),
+                (Bld(("jpn",30)),            "jpn", "jpn", false, "pure japanese -> not mixed"),
+                (Bld(("jpn",30),("han",4)),  "jpn", "jpn", false, "japanese + kanji-only -> not mixed (conservative)"),
             };
             int mixPass = 0;
             foreach (var (tbl, folder, expLang, expMix, what) in mixCases)

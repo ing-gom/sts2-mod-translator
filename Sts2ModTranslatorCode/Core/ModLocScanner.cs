@@ -34,12 +34,12 @@ public sealed class SupportedMod
     public string ContentLang = "eng";
 
     /// <summary>
-    /// 원문 폴더가 <b>두 스크립트를 유의미하게 섞어</b> 담고 있는지(예: 대부분 영어 + 일부 중국어 —
-    /// Black Souls 처럼 부분만 번역된 모드). <see cref="ContentLang"/> 로 안 읽히는(다른 스크립트가
-    /// 우세한) 항목이 여럿일 때 true. 이때는 원문 언어(<see cref="ContentLang"/>) 자체를 "✎ 원문 편집"
-    /// 진입점으로 노출해, 사용자가 원문에 섞인 외국어 항목만 골라 덮어쓸 수 있게 한다. 자동번역도 이
-    /// 플래그가 켜지면 source_lang 을 생략해 항목별 언어를 DeepL 이 자동감지한다.
-    /// 보통(단일 스크립트) 모드는 false.
+    /// 원문 폴더가 <b>두 언어를 섞어</b> 담고 있는지(예: 대부분 영어 + 일부 중국어 — Black Souls 처럼
+    /// 부분만 번역된 모드, 또는 중국어 + 일부 한국어/일본어). <see cref="ContentLang"/> 과 <b>다른 언어</b>인
+    /// 항목이 2개 이상일 때 true(CJK↔라틴뿐 아니라 CJK끼리도 감지, 비율 무관). 이때는 원문 언어
+    /// (<see cref="ContentLang"/>) 자체를 "✎ 텍스트 편집" 진입점으로 노출해, 섞인 외국어 항목만 골라
+    /// 덮어쓸 수 있게 한다. 자동번역도 이 플래그가 켜지면 source_lang 을 생략해 항목별 언어를 DeepL 이
+    /// 자동감지한다. 단일 언어 모드는 false.
     /// </summary>
     public bool HasMixedSource;
 
@@ -177,22 +177,23 @@ public static class ModLocScanner
 
     /// <inheritdoc cref="DetectContentLang(Dictionary{string, Dictionary{string, string}}, string)"/>
     /// <param name="mixed">
-    /// 원문이 두 스크립트를 <b>유의미하게 섞고</b> 있으면 true(예: 대부분 영어 + 일부 중국어).
-    /// 판정: 감지된 <c>ContentLang</c> 으로 <b>안 읽히는</b>(다른 스크립트가 우세한) 항목 수가 3개 이상이고
-    /// 전체 비어있지 않은 항목의 10% 이상일 때. 소수의 외래어·UI 잔재(예: 한국어 모드 속 "OK")로는 켜지지
-    /// 않게 절대 최소치와 비율을 함께 본다. <see cref="SupportedMod.HasMixedSource"/> 로 흘러가
-    /// 부분 번역 모드에서 원문 언어 자체를 편집 대상으로 열어 준다.
+    /// 원문이 두 언어를 <b>섞고</b> 있으면 true(예: 대부분 영어 + 일부 중국어, 또는 중국어 + 일부 한국어).
+    /// 판정: 각 항목을 우세 <b>언어</b>로 분류(한글=한국어, 가나=일본어, 순수 한자=중국어, 라틴=영어권)한 뒤,
+    /// 감지된 <c>ContentLang</c> 과 <b>다른 언어</b>인 항목이 <b>2개 이상</b>이면 true(비율 무관 — 부분 번역은
+    /// 잔여가 적어도 잡아야 하므로). CJK↔라틴뿐 아니라 <b>CJK끼리</b>(중↔한, 중↔일)도 감지. 단 순수 한자만으론
+    /// 中日 구분이 불가하므로, 일본어 모드에서 한자-only 항목은 외국으로 세지 않는다(보수적, 오탐 방지).
+    /// <see cref="SupportedMod.HasMixedSource"/> 로 흘러가 부분 번역 모드에서 원문 언어 편집을 열어 준다.
     /// </param>
     public static string DetectContentLang(
         Dictionary<string, Dictionary<string, string>> byTable, string folderLang, out bool mixed)
     {
         long hangul = 0, kana = 0, han = 0, latin = 0;
-        int nonEmpty = 0, cjkDomEntries = 0, latinDomEntries = 0;
+        // 항목별 '우세 언어' 버킷(혼합 판정용) — CJK 끼리도 구분: 한글=한국어, 가나=일본어, 순수 한자=중국어(애매).
+        int latEntries = 0, korEntries = 0, jpnEntries = 0, hanEntries = 0;
         foreach (var tbl in byTable.Values)
         foreach (var v in tbl.Values)
         {
             if (string.IsNullOrEmpty(v)) continue;
-            nonEmpty++;
             long eh = 0, ek = 0, ehan = 0, el = 0; // 이 항목 하나의 스크립트별 글자 수
             foreach (char c in v)
             {
@@ -207,10 +208,12 @@ public static class ModLocScanner
                 else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) el++;
             }
             hangul += eh; kana += ek; han += ehan; latin += el;
-            // 이 항목이 어느 스크립트 우세인지 — 원문에 섞인 '외국(다른 스크립트)' 항목 수를 세기 위함.
+            // 이 항목의 '우세 언어' 분류 — 혼합 판정에서 ContentLang 과 다른 언어 항목(foreign)을 센다.
             long ecjk = eh + ek + ehan;
-            if (ecjk > el) cjkDomEntries++;
-            else if (el > ecjk && el > 0) latinDomEntries++;
+            if (el >= ecjk) { if (el > 0) latEntries++; }              // 라틴 우세(영어권)
+            else if (eh >= ek && eh >= ehan && eh > 0) korEntries++;   // 한글 우세 = 한국어
+            else if (ek > 0) jpnEntries++;                             // 가나 존재 = 일본어(전용 문자)
+            else hanEntries++;                                         // 순수 한자 = 중국어(또는 일본어 간지=애매)
         }
 
         long cjk = hangul + kana + han;
@@ -222,11 +225,20 @@ public static class ModLocScanner
         else if (hangul >= han) content = "kor";
         else content = "zhs"; // DeepL source_lang 은 zhs/zht 모두 ZH 이므로 간체/번체 구분 불필요
 
-        // 혼합 원문 판정: ContentLang 으로 안 읽히는 '외국' 항목(반대 스크립트 우세)이 몇 개인지.
-        //   ContentLang 이 CJK 계열이면 라틴 우세 항목이, 아니면 CJK 우세 항목이 외국이다.
-        bool contentIsCjk = content is "kor" or "jpn" or "zhs" or "zht" or "chs" or "cht";
-        int foreign = contentIsCjk ? latinDomEntries : cjkDomEntries;
-        mixed = foreign >= 3 && foreign * 10 >= nonEmpty;
+        // 혼합(부분 번역) 판정: ContentLang 과 '다른 언어'인 항목 수(foreign). CJK↔라틴뿐 아니라 CJK끼리도.
+        //   중국어 모드: 한글(한국어)·가나(일본어)·라틴 항목이 외국. 순수 한자는 같은 언어(중국어).
+        //   일본어 모드: 한글·라틴만 외국. 순수 한자/가나는 일본어로 봄(한자만으론 中日 구분 불가 → 보수적).
+        //   한국어 모드: 라틴·가나·한자 항목이 외국(현대 한국어는 한글 우세).
+        //   라틴(영어권) 모드: 모든 CJK 우세 항목이 외국.
+        int foreign = content switch
+        {
+            "kor" => latEntries + jpnEntries + hanEntries,
+            "jpn" => latEntries + korEntries,
+            "zhs" or "zht" or "chs" or "cht" => latEntries + korEntries + jpnEntries,
+            _ => korEntries + jpnEntries + hanEntries, // 라틴 계열
+        };
+        // 비율 문턱은 제거(부분 번역은 잔여 비율이 작아도 감지) — 절대 최소 2개만(단일 이상치 노이즈 방지).
+        mixed = foreign >= 2;
         return content;
     }
 
