@@ -42,9 +42,13 @@ If a mod's source folder actually *mixes* two languages (e.g. an English folder 
 
 Mods change. When the mod you translated ships a new version, its row is tagged **⚠ out of sync**, but that only tells you *something* moved — not *what*. This mod also tracks, per entry, the exact original text you translated each line **from**. When a mod update rewrites some card or event, only those specific entries are flagged **source-changed** — everything you translated that still matches is left alone.
 
-- The file list shows `⚠ N source-changed` per file; open one and a **Next changed ▼** button jumps straight to each entry whose original moved. The status bar shows what it *was* translated from, and the left reference pane shows the current original — so you can see exactly what changed and fix just that line.
+- The file list shows `⚠ N source-changed` per file; open one and a **Next changed ▼** button jumps straight to each entry whose original moved. The status bar shows a **word-level diff** of what changed (`Deal ⟨5→8⟩ damage.`) and the left reference pane shows the current original — so you can see exactly which word to fix, not just that *something* did.
 - Re-translate the entry and save, and the flag clears for that line. Editing an unrelated line never clears another line's flag.
 - This is forward-looking: it starts tracking from the version you have installed now, so a mod that updates *after* you translate it is caught precisely, entry by entry.
+
+### Mod glossary (keeping terms consistent)
+
+The built-in keyword glossary already pins the game's own terms (`Vulnerable` → the official word in your language). For a mod's **own** terms — character names, unique mechanics — press **Glossary…** on the file list and add lines like `Artoria = 아르토리아`. Any entry whose original uses a term but whose translation doesn't use your wording is flagged, with a **Next term ▼** navigator and an inline hint in the reference header telling you the term to use. It's advisory (it never rewrites your text) and works no matter how the translation was made — DeepL, an AI agent, or by hand. The glossary lives in the workspace, so the AI agent picks it up automatically. Local-only; it isn't bundled into exported packs.
 
 ### Machine-translation drafts (DeepL)
 
