@@ -30,11 +30,13 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Line numbers + JSON validation on save.
 - **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. The file list also shows an `◦ N empty` tag per file. Entries whose original text is itself empty are left out of the count — there is nothing to translate in them, so they never stand between you and 100%.
 
-### Editing a mod's own language / leftover foreign text
+### Editing a mod's own text / leftover foreign lines
 
-Open any mod and the language list starts with an **✎ original** row for the mod's own language (e.g. English for an English mod). Pick it to rewrite or override the mod's original text — handy when a mod is *mostly* translated but a few cards or events are still in another language (common with machine-translated mods). Only the entries you fill in are applied over the original; blanks keep the original text. Because it's an override rather than a translation, this row shows an edit count instead of a percentage, and the mod list stays clean (an already-English mod isn't shown as "0% translated").
+Open any mod and the language list starts with an **✎ edit this mod's own text** row for the language the mod already ships (e.g. English for a mostly-English mod). Pick it to override that text — handy when a mod is *mostly* translated but a few cards or events are still in another language, or when a machine-translated mod reads roughly. Only the entries you fill in are applied over the mod's existing text; blanks keep it as-is. Because it's an override rather than a translation, this row shows an edit count instead of a percentage, and the mod list stays clean (an already-English mod isn't shown as "0% translated").
 
-If a mod's source folder actually *mixes* two scripts (e.g. an English folder with some entries still in Chinese), it's tagged **"partly translated — mixed source"**, the ✎ original row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. The left reference pane and **Next empty ▼** help you find them.
+*(This row edits whatever language the mod's source folder is written in — it doesn't assume that language is the mod's "original". If a mod also ships another language you'd rather edit, that language is just a normal row lower in the list.)*
+
+If a mod's source folder actually *mixes* two scripts (e.g. an English folder with some entries still in Chinese), it's tagged **"partly translated — mixed source"**, its row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. The left reference pane and **Next empty ▼** help you find them.
 
 ### Machine-translation drafts (DeepL)
 

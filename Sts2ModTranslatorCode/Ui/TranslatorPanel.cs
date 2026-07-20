@@ -344,8 +344,9 @@ public static class TranslatorPanel
         // 길어서 한 줄에 안 들어가므로 자동 줄바꿈(cf. v1.14.1 출력언어 배너 — Lbl 기본은 미줄바꿈).
         var langBanner = Lbl(
             "Pick any language to translate. The current game language applies instantly; "
-            + "others apply after you switch the game to that language. The top \"✎ original\" row "
-            + "edits this mod's own language — use it to fix any leftover foreign text.", GRAY);
+            + "others apply after you switch the game to that language. The top row edits the "
+            + "mod's own text (the language it already ships) — use it to fix leftover or rough "
+            + "lines when you play it.", GRAY);
         langBanner.AutowrapMode = Godot.TextServer.AutowrapMode.Word;
         langBanner.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         _content!.AddChild(langBanner);
@@ -369,17 +370,20 @@ public static class TranslatorPanel
         {
             bool origIsCurrent = string.Equals(orig, cur, StringComparison.OrdinalIgnoreCase);
             bool mixed = _mod.HasMixedSource;
-            var (_, edited) = TranslationStore.Coverage(_mod, orig); // tr = 원문 위 non-empty override 수
+            var (_, edited) = TranslationStore.Coverage(_mod, orig); // tr = 이 언어 위 non-empty override 수
+            // ★"original" 이라고 단정하지 않는다 — ContentLang 은 '소스 폴더의 실제 언어'일 뿐,
+            //   모드의 진짜 원본/저작 언어라는 보장이 없다(eng+zhs 를 담은 중국어 모드는 eng 가 기계번역이라
+            //   ContentLang=eng 여도 원본은 zhs). 그래서 행이 '하는 일'(이 모드가 담은 그 언어 텍스트 편집)로만 표기.
             string status = mixed
-                ? "✎ original — partly translated: fill the foreign leftovers"
-                : "✎ original — edit / override this mod's own text";
+                ? "✎ partly translated — fill the foreign leftovers"
+                : "✎ edit this mod's own text";
             if (edited > 0) status += $"  ({edited} edited)";
             string curTag = origIsCurrent ? "  ◀ current" : "";
             var ob = RowButton($"{orig}     {status}{curTag}");
             ob.AddThemeColorOverride("font_color", origIsCurrent ? GOLD : GRAY);
             ob.TooltipText = (mixed
                 ? $"This mod is only partly translated — some entries are still in another language. Pick this to override just those into {LangDisplay(orig)} (leave the already-correct ones empty to keep them). DeepL auto-fill auto-detects each entry, so only the foreign ones are translated. Use \"Next empty ▼\" and the left reference pane to spot them."
-                : $"Edit this mod's own {LangDisplay(orig)} text. Only the entries you fill in are applied over the original; blanks keep the original text.")
+                : $"Edit the {LangDisplay(orig)} text this mod ships (the text shown when you play in {LangDisplay(orig)}). Only the entries you fill in are applied over the mod's existing text; blanks keep it as-is.")
                 + (origIsCurrent ? "" : $" It shows in-game after you switch the game language to {LangDisplay(orig)}.");
             ob.Pressed += () =>
             {
