@@ -266,6 +266,40 @@ internal static class SoloTest
                 TranslationStore.SaveOverrideText(OrigMod, "kor", Table, "{}");
             }
 
+            // ── UI 렌더 검증: 언어 목록 맨 위 '✎ original' 행이 실제로 그려지는가(v1.14.4) ──
+            // BuildLanguages 는 solo 로직 assert 로는 안 타므로, 패널을 리플렉션으로 열어 언어뷰까지 몰고
+            // 가 스크린샷을 남긴다. ContentLang=eng 모드(Black Souls 시나리오) 우선.
+            try
+            {
+                var tp = typeof(TranslatorPanel);
+                var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+                bool paneled = tp.GetField("_root", flags)?.GetValue(null) != null;
+                if (!paneled) W("UI drive: panel not attached (menu button missing) — skipping render shot");
+                else
+                {
+                    tp.GetMethod("ShowPanel", flags)?.Invoke(null, null);
+                    await Task.Delay(300);
+                    await Shot("3_panel_mods");
+                    var uiScan = TranslationSync.CurrentScan;
+                    var mod = uiScan?.Supported.FirstOrDefault(m => string.Equals(m.ContentLang, "eng", StringComparison.OrdinalIgnoreCase))
+                              ?? uiScan?.Supported.FirstOrDefault();
+                    if (mod != null)
+                    {
+                        tp.GetField("_mod", flags)?.SetValue(null, mod);
+                        var viewType = tp.GetNestedType("View", System.Reflection.BindingFlags.NonPublic);
+                        var nav = tp.GetMethod("Navigate", flags);
+                        nav?.Invoke(null, new[] { Enum.Parse(viewType!, "Languages") });
+                        await Task.Delay(450);
+                        W($"UI drive: opened Languages view for '{mod.Id}' (ContentLang={mod.ContentLang}) — '✎ original' row should be at top");
+                        await Shot("4_languages_" + mod.ContentLang);
+                    }
+                    else W("UI drive: no supported mod to open");
+                    tp.GetMethod("Hide", flags)?.Invoke(null, null);
+                    await Task.Delay(150);
+                }
+            }
+            catch (Exception ex) { W("UI drive FAILED: " + ex.Message); }
+
             // 유저가 이어서 쓸 수 있게 원래 언어 복귀(어차피 비저장이지만 시각적으로도 원상복구).
             if (!string.Equals(originalLang, "kor", StringComparison.OrdinalIgnoreCase))
             {

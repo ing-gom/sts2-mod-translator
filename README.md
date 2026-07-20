@@ -30,9 +30,11 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Line numbers + JSON validation on save.
 - **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. The file list also shows an `◦ N empty` tag per file. Entries whose original text is itself empty are left out of the count — there is nothing to translate in them, so they never stand between you and 100%.
 
-### Partially-translated (mixed-language) mods
+### Editing a mod's own language / leftover foreign text
 
-Some mods ship an incomplete translation — most of their text is in one language but a chunk was never translated (e.g. a mostly-English mod with some cards still in Chinese). When a mod's source is detected as *mixed*, its row is tagged **"partly translated — mixed source"** and its **✎ Edit original** entry becomes *"fill the foreign leftovers"*: open it to override just those foreign entries into the language you're playing, leaving the already-correct ones empty. The left reference pane and **Next empty ▼** help you find them, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated.
+Open any mod and the language list starts with an **✎ original** row for the mod's own language (e.g. English for an English mod). Pick it to rewrite or override the mod's original text — handy when a mod is *mostly* translated but a few cards or events are still in another language (common with machine-translated mods). Only the entries you fill in are applied over the original; blanks keep the original text. Because it's an override rather than a translation, this row shows an edit count instead of a percentage, and the mod list stays clean (an already-English mod isn't shown as "0% translated").
+
+If a mod's source folder actually *mixes* two scripts (e.g. an English folder with some entries still in Chinese), it's tagged **"partly translated — mixed source"**, the ✎ original row reads *"fill the foreign leftovers"*, and DeepL auto-fill auto-detects each entry's language so only the untranslated ones are translated. The left reference pane and **Next empty ▼** help you find them.
 
 ### Machine-translation drafts (DeepL)
 

@@ -341,9 +341,14 @@ public static class TranslatorPanel
             .ToList();
 
         // 현재 언어만 인게임 즉시 반영, 나머지는 그 언어로 전환 후 적용됨을 안내.
-        _content!.AddChild(Lbl(
+        // 길어서 한 줄에 안 들어가므로 자동 줄바꿈(cf. v1.14.1 출력언어 배너 — Lbl 기본은 미줄바꿈).
+        var langBanner = Lbl(
             "Pick any language to translate. The current game language applies instantly; "
-            + "others apply after you switch the game to that language.", GRAY));
+            + "others apply after you switch the game to that language. The top \"✎ original\" row "
+            + "edits this mod's own language — use it to fix any leftover foreign text.", GRAY);
+        langBanner.AutowrapMode = Godot.TextServer.AutowrapMode.Word;
+        langBanner.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _content!.AddChild(langBanner);
 
         // 폴더 이름(예: eng)과 실제 원문 언어가 다르면 명시 — DeepL source 오판 혼동 방지.
         if (!string.Equals(_mod.ContentLang, _mod.SourceLang, StringComparison.OrdinalIgnoreCase))
@@ -353,6 +358,38 @@ public static class TranslatorPanel
                 + "as the source language.", GOLD));
 
         var list = ScrollList();
+
+        // 원문 언어(ContentLang) 편집 행 — 다른 언어와 '같은 목록'의 정식 항목으로 노출한다.
+        // (예전엔 하단 별도 회색 "✎ Edit original" 행이었으나, 이미 영어인 모드를 유저가 덮어쓰려 해도
+        //  목록에 영어가 없어 "영어 옵션이 없다"는 오해가 잦았다 — Black Souls 계열 실제 피드백.)
+        // 번역이 아니라 '원문 위 override' 라서 진행률 %(0% 로 뜨면 "번역 필요"처럼 보이는 노이즈) 대신
+        // 편집한 개수/안내를 보여준다. 모드 목록(BuildMods)의 커버리지엔 여전히 미포함이라 상단 목록은 깨끗.
+        string orig = _mod.ContentLang;
+        if (!string.IsNullOrEmpty(orig))
+        {
+            bool origIsCurrent = string.Equals(orig, cur, StringComparison.OrdinalIgnoreCase);
+            bool mixed = _mod.HasMixedSource;
+            var (_, edited) = TranslationStore.Coverage(_mod, orig); // tr = 원문 위 non-empty override 수
+            string status = mixed
+                ? "✎ original — partly translated: fill the foreign leftovers"
+                : "✎ original — edit / override this mod's own text";
+            if (edited > 0) status += $"  ({edited} edited)";
+            string curTag = origIsCurrent ? "  ◀ current" : "";
+            var ob = RowButton($"{orig}     {status}{curTag}");
+            ob.AddThemeColorOverride("font_color", origIsCurrent ? GOLD : GRAY);
+            ob.TooltipText = (mixed
+                ? $"This mod is only partly translated — some entries are still in another language. Pick this to override just those into {LangDisplay(orig)} (leave the already-correct ones empty to keep them). DeepL auto-fill auto-detects each entry, so only the foreign ones are translated. Use \"Next empty ▼\" and the left reference pane to spot them."
+                : $"Edit this mod's own {LangDisplay(orig)} text. Only the entries you fill in are applied over the original; blanks keep the original text.")
+                + (origIsCurrent ? "" : $" It shows in-game after you switch the game language to {LangDisplay(orig)}.");
+            ob.Pressed += () =>
+            {
+                _lang = orig;
+                TranslationStore.EnsureTemplates(_mod, orig); // 원문 언어 override 스켈레톤 생성
+                Navigate(View.Files);
+            };
+            ListVBox(list).AddChild(ob);
+        }
+
         foreach (var lang in langs)
         {
             var l = lang;
@@ -369,36 +406,6 @@ public static class TranslatorPanel
                 Navigate(View.Files);
             };
             ListVBox(list).AddChild(b);
-        }
-
-        // 원문 언어 편집(opt-in): 이 모드의 '원래 언어' 텍스트 자체를 다시 써서 덮어쓸 수 있다.
-        // 번역 대상 목록엔 넣지 않는다(그러면 모든 영어 모드가 "번역 필요"처럼 보임) — 별도 행으로만.
-        // 넣은 비어있지 않은 항목만 원문 위에 덮어씌워지고, 빈 항목은 원문 그대로. 게임이 그 언어일 때만
-        // 인게임 즉시 반영(다른 언어면 그 언어로 전환 후).
-        // 원문이 혼합(부분 번역)인 모드에서는 이 행이 곧 '섞인 외국어 항목을 고치는' 진입점이다 —
-        // 그래서 라벨/툴팁에 그 점과, 자동번역이 항목별 언어를 자동감지한다는 점을 함께 안내한다.
-        string orig = _mod.ContentLang;
-        if (!string.IsNullOrEmpty(orig))
-        {
-            bool origIsCurrent = string.Equals(orig, cur, StringComparison.OrdinalIgnoreCase);
-            bool mixed = _mod.HasMixedSource;
-            var ob = RowButton(mixed
-                ? $"✎ Edit original ({LangDisplay(orig)}) — partly translated: fill the foreign leftovers"
-                : $"✎ Edit original ({LangDisplay(orig)}) — rewrite this mod's own text");
-            ob.AddThemeColorOverride("font_color", GRAY);
-            string tip = mixed
-                ? $"This mod is only partly translated — some entries are still in another language. Open this to override just those into {LangDisplay(orig)} (leave the already-correct ones empty to keep them). DeepL auto-fill auto-detects each entry, so only the foreign ones are translated. Use \"Next empty ▼\" and the left reference pane to spot them."
-                : "Rewrite the mod's original text. Only the entries you fill in are applied over the original; blanks keep the original text.";
-            if (!origIsCurrent)
-                tip += $" It shows in-game after you switch the game language to {LangDisplay(orig)}.";
-            ob.TooltipText = tip;
-            ob.Pressed += () =>
-            {
-                _lang = orig;
-                TranslationStore.EnsureTemplates(_mod, orig); // 원문 언어 override 스켈레톤 생성
-                Navigate(View.Files);
-            };
-            ListVBox(list).AddChild(ob);
         }
 
         // 하단 액션: 이 모드의 번역을 배포 가능한 독립 "번역 모드" 로 내보내기 (워크샵 친화).
