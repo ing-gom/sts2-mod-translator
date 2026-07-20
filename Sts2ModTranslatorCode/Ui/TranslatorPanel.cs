@@ -220,6 +220,20 @@ public static class TranslatorPanel
         var scan = TranslationSync.CurrentScan;
         if (scan == null) { _content!.AddChild(Lbl("No mods scanned yet.", GRAY)); return; }
 
+        // 출력 언어 = 게임 설정 언어. 별도 드롭다운이 없어 "영어로 번역이 안 된다"는 오해가 잦다
+        // (원문이 영어인 모드는 영어가 번역 대상에서 빠짐). 출력 언어와 바꾸는 법을 상단에 명시.
+        string cur = TranslationSync.CurrentLanguage();
+        var banner = Lbl(
+            $"Output language: {LangDisplay(cur)} — mods are translated into your game's language. "
+            + "To translate into a different language (e.g. English), change the game language in "
+            + "Options; the target follows it. A mod already in your language isn't listed as a translation "
+            + "target — open it to rewrite its original text if you want.",
+            GOLD);
+        banner.AddThemeFontSizeOverride("font_size", 16);
+        banner.AutowrapMode = Godot.TextServer.AutowrapMode.Word; // 폭을 밀지 않고 줄바꿈
+        banner.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _content!.AddChild(banner);
+
         var list = ScrollList();
         int outdated = 0;
         foreach (var m in scan.Supported.OrderBy(m => m.Id, StringComparer.Ordinal))
@@ -353,6 +367,28 @@ public static class TranslatorPanel
                 Navigate(View.Files);
             };
             ListVBox(list).AddChild(b);
+        }
+
+        // 원문 언어 편집(opt-in): 이 모드의 '원래 언어' 텍스트 자체를 다시 써서 덮어쓸 수 있다.
+        // 번역 대상 목록엔 넣지 않는다(그러면 모든 영어 모드가 "번역 필요"처럼 보임) — 별도 행으로만.
+        // 넣은 비어있지 않은 항목만 원문 위에 덮어씌워지고, 빈 항목은 원문 그대로. 게임이 그 언어일 때만
+        // 인게임 즉시 반영(다른 언어면 그 언어로 전환 후).
+        string orig = _mod.ContentLang;
+        if (!string.IsNullOrEmpty(orig))
+        {
+            bool origIsCurrent = string.Equals(orig, cur, StringComparison.OrdinalIgnoreCase);
+            var ob = RowButton($"✎ Edit original ({LangDisplay(orig)}) — rewrite this mod's own text");
+            ob.AddThemeColorOverride("font_color", GRAY);
+            ob.TooltipText = origIsCurrent
+                ? "Rewrite the mod's original text. Only the entries you fill in are applied over the original; blanks keep the original text."
+                : $"Rewrite the mod's original text. It shows in-game after you switch the game language to {LangDisplay(orig)}.";
+            ob.Pressed += () =>
+            {
+                _lang = orig;
+                TranslationStore.EnsureTemplates(_mod, orig); // 원문 언어 override 스켈레톤 생성
+                Navigate(View.Files);
+            };
+            ListVBox(list).AddChild(ob);
         }
 
         // 하단 액션: 이 모드의 번역을 배포 가능한 독립 "번역 모드" 로 내보내기 (워크샵 친화).

@@ -281,9 +281,15 @@ public static class TranslationSync
         foreach (var mod in scan.Supported)
         {
             supportedIds.Add(mod.Id); // 게이트보다 먼저 — bundled 루프가 중복 주입하지 않게.
-            // 이 모드의 실제 원문 언어로 플레이 중이면 원문 그대로가 정답 — 주입 스킵.
-            // (한국어를 eng/ 에 담은 모드는 eng≠ContentLang 이라 eng 주입이 정상 진행된다.)
-            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase)) continue;
+            // 이 모드의 실제 원문 언어로 플레이 중이면 기본은 원문 그대로가 정답 — 전체 재주입은 안 한다.
+            // 단, 사용자가 원문 텍스트를 의도적으로 고쳐 넣은 override(비어 있지 않은 값)만 골라 덮어쓴다.
+            // 아무 것도 고치지 않았으면 아무 일도 안 일어난다(원문 그대로 = 기존 동작과 동일).
+            // (한국어를 eng/ 에 담은 모드는 eng≠ContentLang 이라 아래 일반 경로로 정상 진행된다.)
+            if (string.Equals(language, mod.ContentLang, StringComparison.OrdinalIgnoreCase))
+            {
+                translated += InjectOriginalOverrides(locMgr, mod, language);
+                continue;
+            }
             // 이 대상 모드에 설치된 번역 모드가 제공한 (언어별) 번역.
             var bundledForMod = scan.Bundled.ForTargetLang(mod.Id, language);
 
@@ -335,6 +341,36 @@ public static class TranslationSync
             $"[Sts2ModTranslator] applied translations for '{language}': {translated} active overrides"
             + (scan.Bundled.Any ? $", {scan.Bundled.Providers.Count} translation pack(s)" : "") + ".");
         return translated;
+    }
+
+    /// <summary>
+    /// 원문 언어로 플레이 중인 모드에, 사용자가 원문 위에 덮어쓴 <b>비어 있지 않은 override</b>만 주입한다.
+    /// 전체 테이블을 defaults 로 재구성하지 않으므로, 고치지 않은 항목은 게임의 원문 텍스트가 그대로 남는다.
+    /// (원문 텍스트를 리워딩/오타수정하려는 의도적 편집을 존중 — 아무 것도 안 고쳤으면 no-op.)
+    /// 주입한 키 수 반환.
+    /// </summary>
+    internal static int InjectOriginalOverrides(LocManager locMgr, SupportedMod mod, string language)
+    {
+        int n = 0;
+        foreach (var table in mod.EngByTable.Keys)
+        {
+            var dict = TranslationStore.LoadNonEmptyOverrides(mod.Id, language, table);
+            if (dict.Count == 0) continue;
+            LocTable? lt = TryGetTable(locMgr, table);
+            if (lt == null) continue;
+            // 일반 주입과 동일하게 SimpleLoc 문법 변환 + SmartFormat 검증 후 병합.
+            try
+            {
+                var valid = FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{mod.Id}/{table}");
+                lt.MergeWith(valid);
+                n += valid.Count;
+            }
+            catch (Exception ex)
+            {
+                MainFile.Logger.Warn($"[Sts2ModTranslator] 원문 override merge 실패 {mod.Id}/{table}: {ex.Message}");
+            }
+        }
+        return n;
     }
 
     private static LocTable? TryGetTable(LocManager locMgr, string table)

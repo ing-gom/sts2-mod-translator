@@ -202,6 +202,43 @@ internal static class SoloTest
             }
             else W("SlayTheUniverse not loaded — skipping real-mod assertion (synthetic detection cases still cover it)");
 
+            // ── 원문 언어 override 주입(원문 위 리라이트) ─────────────────
+            // 현재 kor 로 세팅돼 있으므로 ContentLang==kor 합성 모드로, "원문 언어일 때 비어있지 않은
+            // override 만 원문 위에 덮어쓴다 / 없으면 no-op"을 base-game main_menu_ui 테이블에서 결정적 검증.
+            {
+                const string OrigMod = "ZZ_OrigOverrideSelfTest";
+                const string OKey = "ZZ-ORIG-OVERRIDE";
+                const string OVal = "덮어쓴 원문 {0}";
+
+                // (a) LoadNonEmptyOverrides: 빈 값 제외, 비어있지 않은 값만.
+                TranslationStore.SaveOverrideText(OrigMod, "kor", Table,
+                    $"{{\"{OKey}\":\"{OVal}\",\"ZZ-EMPTY\":\"\"}}");
+                var loaded = TranslationStore.LoadNonEmptyOverrides(OrigMod, "kor", Table);
+                Assert(loaded.Count == 1 && loaded.TryGetValue(OKey, out var lv) && lv == OVal,
+                    "LoadNonEmptyOverrides returns only non-empty entries");
+
+                // (b) InjectOriginalOverrides: ContentLang==현재언어 모드의 non-empty override 가 실제 주입됨.
+                var origMod = new SupportedMod { Id = OrigMod, Name = "OrigOverride", ContentLang = "kor", SourceLang = "eng" };
+                origMod.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>>
+                { [Table] = new Dictionary<string, string> { [OKey] = "original {0}" } };
+                int inj = TranslationSync.InjectOriginalOverrides(mgr, origMod, "kor");
+                LocTable? ot = null; try { ot = mgr.GetTable(Table); } catch { /* asserted below */ }
+                Assert(inj >= 1 && ot != null && ot.HasEntry(OKey) && ot.GetRawText(OKey) == OVal,
+                    "original-language non-empty override IS injected over the original");
+
+                // (c) no-op: override 없는 모드는 아무 것도 주입하지 않음(원문 그대로).
+                var cleanMod = new SupportedMod { Id = "ZZ_CleanNoOverride", Name = "Clean", ContentLang = "kor", SourceLang = "eng" };
+                cleanMod.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>>
+                { [Table] = new Dictionary<string, string> { ["ZZ-CLEAN-KEY"] = "original" } };
+                int injClean = TranslationSync.InjectOriginalOverrides(mgr, cleanMod, "kor");
+                LocTable? ct = null; try { ct = mgr.GetTable(Table); } catch { }
+                Assert(injClean == 0 && (ct == null || !ct.HasEntry("ZZ-CLEAN-KEY")),
+                    "mod with no overrides = no-op (original text untouched)");
+
+                // 정리: 합성 override 를 빈 객체로 중화(다음 실행 오염 방지). 테이블 주입은 SetLanguage 로 리셋됨.
+                TranslationStore.SaveOverrideText(OrigMod, "kor", Table, "{}");
+            }
+
             // 유저가 이어서 쓸 수 있게 원래 언어 복귀(어차피 비저장이지만 시각적으로도 원상복구).
             if (!string.Equals(originalLang, "kor", StringComparison.OrdinalIgnoreCase))
             {

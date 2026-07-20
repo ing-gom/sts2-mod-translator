@@ -386,6 +386,20 @@ public static class TranslationStore
     }
 
     /// <summary>
+    /// override 파일에서 <b>비어 있지 않은 값만</b> (키→값)으로 읽는다. 원문 언어 편집처럼
+    /// "전체 테이블을 defaults 로 재구성하지 않고, 사용자가 실제로 고친 항목만" 덮어쓸 때 쓴다.
+    /// 파일 없음/빈/JSON 깨짐 → 빈 dict(=아무 것도 덮어쓰지 않음, 원문 그대로).
+    /// </summary>
+    public static Dictionary<string, string> LoadNonEmptyOverrides(string modId, string lang, string table)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!TryReadJson(OverridePath(modId, lang, table), out var ov, out _)) return result;
+        foreach (var kv in ov)
+            if (!string.IsNullOrEmpty(kv.Value)) result[kv.Key] = kv.Value;
+        return result;
+    }
+
+    /// <summary>
     /// UI 파일 목록용 상태: (총 키, 번역된 키, JSON 깨짐 여부).
     /// invalid=true 면 파일을 파싱할 수 없어 번역이 적용되지 않는 상태(편집기에서 수정 필요).
     /// 번역 카운트는 템플릿(eng) 키 집합 안에서만 센다.
