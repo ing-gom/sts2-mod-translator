@@ -246,6 +246,8 @@ public static class TranslatorPanel
             // 폴더 이름과 실제 원문 언어가 다르면(예: 한국어 in eng/) 태그에 실제 언어를 병기.
             string srcTag = string.Equals(m.ContentLang, m.SourceLang, StringComparison.OrdinalIgnoreCase)
                 ? "" : $"  (source: {LangDisplay(m.ContentLang)})";
+            // 원문이 혼합(부분 번역)이면 명시 — "✎ Edit original" 로 섞인 외국어 항목을 덮어쓸 수 있음을 알린다.
+            if (m.HasMixedSource) srcTag += "  (partly translated — mixed source)";
             var b = RowButton($"{m.Name}     [{string.Join(", ", m.ShipsLangs)}]{srcTag}{pack}{sync}");
             if (sync.Length > 0) { b.AddThemeColorOverride("font_color", RED); outdated++; }
             else if (pack.Length > 0) b.AddThemeColorOverride("font_color", GOLD);
@@ -373,15 +375,23 @@ public static class TranslatorPanel
         // 번역 대상 목록엔 넣지 않는다(그러면 모든 영어 모드가 "번역 필요"처럼 보임) — 별도 행으로만.
         // 넣은 비어있지 않은 항목만 원문 위에 덮어씌워지고, 빈 항목은 원문 그대로. 게임이 그 언어일 때만
         // 인게임 즉시 반영(다른 언어면 그 언어로 전환 후).
+        // 원문이 혼합(부분 번역)인 모드에서는 이 행이 곧 '섞인 외국어 항목을 고치는' 진입점이다 —
+        // 그래서 라벨/툴팁에 그 점과, 자동번역이 항목별 언어를 자동감지한다는 점을 함께 안내한다.
         string orig = _mod.ContentLang;
         if (!string.IsNullOrEmpty(orig))
         {
             bool origIsCurrent = string.Equals(orig, cur, StringComparison.OrdinalIgnoreCase);
-            var ob = RowButton($"✎ Edit original ({LangDisplay(orig)}) — rewrite this mod's own text");
+            bool mixed = _mod.HasMixedSource;
+            var ob = RowButton(mixed
+                ? $"✎ Edit original ({LangDisplay(orig)}) — partly translated: fill the foreign leftovers"
+                : $"✎ Edit original ({LangDisplay(orig)}) — rewrite this mod's own text");
             ob.AddThemeColorOverride("font_color", GRAY);
-            ob.TooltipText = origIsCurrent
-                ? "Rewrite the mod's original text. Only the entries you fill in are applied over the original; blanks keep the original text."
-                : $"Rewrite the mod's original text. It shows in-game after you switch the game language to {LangDisplay(orig)}.";
+            string tip = mixed
+                ? $"This mod is only partly translated — some entries are still in another language. Open this to override just those into {LangDisplay(orig)} (leave the already-correct ones empty to keep them). DeepL auto-fill auto-detects each entry, so only the foreign ones are translated. Use \"Next empty ▼\" and the left reference pane to spot them."
+                : "Rewrite the mod's original text. Only the entries you fill in are applied over the original; blanks keep the original text.";
+            if (!origIsCurrent)
+                tip += $" It shows in-game after you switch the game language to {LangDisplay(orig)}.";
+            ob.TooltipText = tip;
             ob.Pressed += () =>
             {
                 _lang = orig;
