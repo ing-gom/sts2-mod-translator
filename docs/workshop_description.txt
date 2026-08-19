@@ -43,7 +43,7 @@ Everything below is for people who want to [b]create[/b] a translation.
 [/list]
 
 [h2]Fix a line without leaving your run[/h2]
-The editor opens from the [b]pause menu[/b] too — see an awkward line mid-fight, pause, fix it, resume. Save applies to the live text instantly, and the run is untouched. Game hotkeys are suspended while the panel is open, so typing can't leak into the game as a card play. [b]Esc[/b] resumes the run without discarding your edits — pause again and the panel is right where you left it.
+The editor opens from the [b]pause menu[/b] too — see an awkward line mid-fight, pause, fix it, resume. Save applies to the live text instantly, and the run is untouched. Game hotkeys are suspended while the panel is open, so typing can't leak into the game as a card play. [b]Esc[/b] closes just the panel and leaves the pause menu up — press it again to resume the run.
 
 [h2]Machine-translate a first draft (DeepL)[/h2]
 Don't start from a blank template — [b]DeepL[/b] fills the [b]empty[/b] entries and never overwrites your work. Paste your own API key once (the free tier's 500,000 chars/month is plenty): [b]Auto-fill[/b] drafts the open file, [b]Auto-fill all[/b] does every file at once. Placeholders, markup and BaseLib shorthand are protected, so machine translation can't break them. It's a draft — game-specific terms still deserve a human pass.

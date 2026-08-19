@@ -37,7 +37,7 @@ The editor also opens from the **pause menu**, so the loop of *spot an awkward l
 
 While the panel is open the game's hotkeys are suspended, so typing a translation can't leak into the game as a card play or an end-turn; they come back the moment it closes.
 
-**Esc** resumes the run and tucks the panel away with the pause menu — it doesn't discard what you were editing. Pause again and the panel is right where you left it, text and all. Unsaved text still only lives in the box, so press **Save** to apply it.
+**Esc** closes just the panel and leaves the pause menu up — press it again to resume the run. Either way nothing you typed is discarded, and if you resume with the panel still open it comes back, text and all, the next time you pause. Unsaved text only lives in the box, so press **Save** to apply it.
 
 ### Editing a mod's own text / leftover foreign lines
 
