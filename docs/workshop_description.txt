@@ -25,7 +25,7 @@ Everything below is for people who want to [b]create[/b] a translation.
 [h2]✍️ Create a translation — how to use[/h2]
 [olist]
 [*]Enable this mod and launch the game in the language you want to translate into.
-[*]Open [b]Main Menu ▸ Mod Translator[/b] (it sits next to Settings).
+[*]Open [b]Main Menu ▸ Mod Translator[/b] (it sits next to Settings) — or, mid-run, [b]Pause ▸ Mod Translator[/b].
 [*]Drill down: pick a [b]mod[/b] ▸ a [b]language[/b] ▸ a [b]file[/b].
 [*]Translate in the built-in editor, or [b]Upload[/b] a JSON file, or [b]Open Folder[/b] to edit externally.
 [*]Press [b]Save[/b] — it validates and applies instantly. No restart needed.
@@ -36,10 +36,14 @@ Everything below is for people who want to [b]create[/b] a translation.
 [*][b]Side-by-side panes[/b] — original text (read-only) on the left, your translation on the right.
 [*][b]Reference dropdown[/b] — switch the left pane to any language the mod ships (compare against the existing Chinese/English), or [b]pack: <lang>[/b] to read an installed pack while you work.
 [*][b]The reference follows you[/b] — move the caret and the left pane scrolls to that entry, highlights it, and names the key in the header. It matches by key, not line number.
+[*][b]Find[/b] — saw an awkward line while playing? Type it (or one distinctive word) in the [b]Find[/b] box and jump straight to that entry. It searches the [b]original[/b], your [b]translation[/b] and the [b]key[/b], so it works even on entries you haven't translated yet, and color tags / [i]!D![/i] placeholders are ignored — you can paste what the game showed you. Every occurrence is [b]highlighted in both panes[/b] as you type, and the jump selects the one you're on. Enter (or [b]Ctrl+F[/b] from the editor) cycles the matches.
 [*][b]Line numbers[/b] and JSON validation on save.
 [*][b]Empty-entry navigator[/b] — a live blank count plus a [b]Next empty ▼[/b] button that jumps to the next untranslated line. Each file also shows an [i]◦ N empty[/i] tag.
 [*][b]Upload[/b] a file, or [b]Open Folder[/b] / [b]Reload[/b] for an external workflow.
 [/list]
+
+[h2]Fix a line without leaving your run[/h2]
+The editor opens from the [b]pause menu[/b] too — see an awkward line mid-fight, pause, fix it, resume. Save applies to the live text instantly, and the run is untouched. Game hotkeys are suspended while the panel is open, so typing can't leak into the game as a card play. [b]Esc[/b] resumes the run without discarding your edits — pause again and the panel is right where you left it.
 
 [h2]Machine-translate a first draft (DeepL)[/h2]
 Don't start from a blank template — [b]DeepL[/b] fills the [b]empty[/b] entries and never overwrites your work. Paste your own API key once (the free tier's 500,000 chars/month is plenty): [b]Auto-fill[/b] drafts the open file, [b]Auto-fill all[/b] does every file at once. Placeholders, markup and BaseLib shorthand are protected, so machine translation can't break them. It's a draft — game-specific terms still deserve a human pass.

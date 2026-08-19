@@ -17,7 +17,7 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 ## Usage
 
 1. Enable the mod and launch the game in the language you want to translate into.
-2. Open **Main Menu ▸ Mod Translator** (next to Settings).
+2. Open **Main Menu ▸ Mod Translator** (next to Settings) — or, without leaving a run, **Pause ▸ Mod Translator**.
 3. Pick a **mod** ▸ a **language** ▸ a **file**.
 4. Translate in the built-in editor, **Upload** a JSON file, or **Open Folder** to edit externally.
 5. Press **Save** — it validates the JSON and applies instantly.
@@ -27,8 +27,17 @@ Mods that hardcode text outside the localization system are listed as *unsupport
 - Side-by-side panes: original (read-only) on the left, your translation on the right.
 - Reference-language toggle: if a mod already ships other languages, switch the left pane to compare against them.
 - **The reference follows you:** move the caret and the left pane scrolls to the same entry and highlights it, with the key you're on named in the header. It matches by key, not line number, so it stays correct even when the reference language translated only part of the file — and says *not in this reference* when the key is missing there entirely.
+- **Find box:** spotted an awkward line while playing? Type it — or one distinctive word — in **Find** and it jumps to that entry. It searches the **original**, your **translation** and the **key**, so it finds entries you haven't translated yet as well as ones you have. Color tags (`[color=…]`) and placeholders (`!D!`, `{…}`) are ignored on both sides, so you can paste what the game actually showed you. Every occurrence is **highlighted in both panes** as you type — original and translation — and the jump selects the one you're on, so you can see at a glance whether the phrase appears once or a dozen times. Enter (or **Ctrl+F** from the editor) cycles the matches; the header shows how many there are and the reference pane follows along.
 - Line numbers + JSON validation on save.
 - **Empty-entry navigator:** a live count of how many entries are still blank, plus a **Next empty ▼** button that jumps straight to the next untranslated line. The file list also shows an `◦ N empty` tag per file. Entries whose original text is itself empty are left out of the count — there is nothing to translate in them, so they never stand between you and 100%.
+
+### Fixing a line without leaving your run
+
+The editor also opens from the **pause menu**, so the loop of *spot an awkward line while playing → fix it → keep going* costs you nothing but a pause. Save applies the change to the live text immediately — no restart, no rebuild, and the run is untouched.
+
+While the panel is open the game's hotkeys are suspended, so typing a translation can't leak into the game as a card play or an end-turn; they come back the moment it closes.
+
+**Esc** resumes the run and tucks the panel away with the pause menu — it doesn't discard what you were editing. Pause again and the panel is right where you left it, text and all. Unsaved text still only lives in the box, so press **Save** to apply it.
 
 ### Editing a mod's own text / leftover foreign lines
 
