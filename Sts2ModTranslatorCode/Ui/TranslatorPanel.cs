@@ -8,6 +8,8 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Localization;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
+using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
+using MegaCrit.Sts2.addons.mega_text;
 using Sts2ModTranslator.Core;
 
 namespace Sts2ModTranslator.Ui;
@@ -44,6 +46,11 @@ public static class TranslatorPanel
     private static HashSet<string> _staleKeys = new(StringComparer.Ordinal);
     /// <summary>stale 키 → 번역 당시의 옛 원문(점프 시 무엇이 바뀌었는지 보여 주기 위함).</summary>
     private static Dictionary<string, string> _staleOldByKey = new(StringComparer.Ordinal);
+
+    private static LineEdit? _findEdit;  // 텍스트 검색 상자(편집기 헤더 아래 줄)
+    private static Label? _findLbl;      // 검색 결과 개수/위치 표시
+    /// <summary>마지막 검색어(정규화 후). 캐럿 이동만으로 재검색하지 않도록 캐시한다.</summary>
+    private static string _findQuery = "";
 
     private static Label? _termLbl;      // 용어집 불일치 항목 개수(편집기 헤더)
     /// <summary>용어집 표기가 어긋난 키 집합("다음 용어 항목" 점프용).</summary>
@@ -98,24 +105,125 @@ public static class TranslatorPanel
         }
     }
 
+    // ── 일시정지 메뉴 항목(런 중) ────────────────────────────
+    /// <summary>
+    /// 런 도중 <b>일시정지 메뉴</b>에도 같은 패널을 연다 — "플레이하다 어색한 줄을 봤는데 고치려면
+    /// 메인 메뉴까지 나가야 한다" 를 없애는 진입점. 버튼은 Settings 버튼을 복제해 만들고, 패널은
+    /// 메인 메뉴 때와 똑같이 <b>메뉴의 마지막 자식 Control</b> 로 붙인다(= 버튼들 위에 그려짐).
+    /// ★자체 CanvasLayer 에 얹지 말 것: CanvasLayer 는 부모 Control 의 visible 을 따라가지 않아
+    /// 일시정지가 닫힌 뒤에도 계속 그려지는데, 정작 입력은 못 받아 "보이는데 X 도 안 먹는" 유령이
+    /// 된다(실측). 자식 Control 이면 일시정지와 함께 숨고, 노드는 살아 있어 편집 내용도 보존된다.
+    /// </summary>
+    public static void AttachToPause(NPauseMenu menu) =>
+        Callable.From(() => DoAttachToPause(menu)).CallDeferred();
+
+    private const string PanelNodeName = "Sts2ModTranslatorPanel";
+
+    private static void DoAttachToPause(NPauseMenu menu)
+    {
+        try
+        {
+            if (menu == null || !GodotObject.IsInstanceValid(menu)) return;
+            if (menu.HasNode(PanelNodeName)) return; // 이미 붙음(메뉴 재사용 — 캐시된 인스턴스)
+
+            var container = menu.GetNodeOrNull<Control>("%ButtonContainer");
+            var settingsBtn = container?.GetNodeOrNull<NPauseMenuButton>("Settings");
+            if (settingsBtn == null)
+            {
+                MainFile.Logger.Warn("[Sts2ModTranslator] 일시정지 Settings 버튼 미발견 — 항목 skip.");
+                return;
+            }
+
+            var btn = (NPauseMenuButton)settingsBtn.Duplicate(14); // signals(1) 제외
+            btn.Name = "Sts2ModTranslatorButton";
+            settingsBtn.AddSibling(btn, false);
+            // 라벨은 로크 테이블(main_menu_ui)이 아니라 직접 넣는다 — 런 중엔 그 테이블이 없을 수 있다.
+            btn.GetNodeOrNull<MegaLabel>("Label")?.SetTextAutoSize("Mod Translator");
+            btn.Released += _ => ShowPanel();
+            // 게임패드 포커스 링은 _Ready 가 6개 버튼으로 이미 짜 두었다 — 끼어들지 않고 자기 자신만.
+            var self = btn.GetPath();
+            btn.FocusNeighborTop = self;
+            btn.FocusNeighborBottom = self;
+            btn.FocusNeighborLeft = self;
+            btn.FocusNeighborRight = self;
+
+            _root = BuildPanel();
+            _root.Visible = false;
+            menu.AddChild(_root); // 마지막 자식 = 같은 캔버스에서 버튼들 위에 그려지고 입력도 먼저 받는다
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] 일시정지 항목 추가 실패: {ex.Message}");
+        }
+    }
+
     private static void ShowPanel()
     {
         if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
         _root.Visible = true;
+        BlockGameHotkeys(_root);
         Navigate(View.Mods);
     }
 
     private static void Hide()
     {
+        BlockGameHotkeys(null);
         if (_root != null && GodotObject.IsInstanceValid(_root)) _root.Visible = false;
+    }
+
+    /// <summary>지금 단축키를 막고 있는 패널 노드(없으면 null). ★해제는 반드시 이 노드로 한다.</summary>
+    private static Control? _blockedScreen;
+
+    /// <summary>
+    /// 패널이 화면에 있는 동안 게임 단축키를 막는다(<paramref name="screen"/>=null 이면 해제).
+    /// 런 중에는 번역문을 타이핑한 키가 그대로 게임 조작(카드 사용·턴 종료 등)으로 새어 나간다.
+    /// ★Add/Remove 는 <b>같은 노드로</b> 짝을 맞춘다 — NHotkeyManager 는 스크린을 Dictionary 키로
+    /// 잡고 no-op 바인딩을 쌓는 방식이라, 노드가 free 된 뒤에는 풀 방법이 없어 게임 단축키가 영구히
+    /// 먹통이 된다. 그래서 해제를 X 버튼뿐 아니라 <b>VisibilityChanged·TreeExiting</b> 에도 건다:
+    /// ESC 로 일시정지를 닫으면 패널은 부모를 따라 숨을 뿐 Hide() 가 호출되지 않는다.
+    /// </summary>
+    private static void BlockGameHotkeys(Control? screen)
+    {
+        try
+        {
+            var mgr = NHotkeyManager.Instance;
+            if (mgr == null) return;
+            if (screen != null && !GodotObject.IsInstanceValid(screen)) screen = null;
+            if (ReferenceEquals(screen, _blockedScreen)) return; // 중복 Add 는 예외(Dictionary 키)
+            if (_blockedScreen != null)
+            {
+                if (GodotObject.IsInstanceValid(_blockedScreen)) mgr.RemoveBlockingScreen(_blockedScreen);
+                _blockedScreen = null;
+            }
+            if (screen != null)
+            {
+                mgr.AddBlockingScreen(screen);
+                _blockedScreen = screen;
+            }
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] 단축키 차단 전환 실패: {ex.Message}");
+        }
     }
 
     // ── 패널 골격 ───────────────────────────────────────────
     private static Control BuildPanel()
     {
         // dim 없음: 투명 root 가 클릭만 가로챔
-        var root = new Control { Name = "Sts2ModTranslatorPanel", MouseFilter = Control.MouseFilterEnum.Stop };
+        var root = new TranslatorPanelRoot { Name = PanelNodeName, MouseFilter = Control.MouseFilterEnum.Stop };
         root.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+        root.OnCancel = Hide; // ESC = 패널만 닫기(일시정지 메뉴에는 그대로 남는다)
+        // 단축키 차단의 수명은 "패널이 실제로 화면에 있는 동안" 이다. ESC 로 일시정지를 닫으면
+        // 패널은 부모를 따라 숨을 뿐 Hide() 를 거치지 않으므로, 여기서 풀지 않으면 게임으로 돌아간
+        // 뒤에도 조작이 먹통이 된다. 트리에서 빠질 때(런 종료)도 free 전에 반드시 푼다.
+        root.VisibilityChanged += () =>
+        {
+            if (!GodotObject.IsInstanceValid(root)) return;
+            if (root.IsVisibleInTree()) BlockGameHotkeys(root);
+            else if (ReferenceEquals(_blockedScreen, root)) BlockGameHotkeys(null);
+        };
+        root.TreeExiting += () => { if (ReferenceEquals(_blockedScreen, root)) BlockGameHotkeys(null); };
 
         // 화면 거의 가득 채우는 큰 패널(가장자리 여백만). 해상도에 따라 자동 스케일.
         var panel = new PanelContainer();
@@ -220,6 +328,9 @@ public static class TranslatorPanel
         _termLbl = null;
         _termKeys.Clear();
         _termInfoByKey.Clear();
+        _findEdit = null;
+        _findLbl = null;
+        _findQuery = "";
 
         switch (_view)
         {
@@ -1037,6 +1148,7 @@ public static class TranslatorPanel
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
+        StyleFindHighlight(srcEdit);
         srcCol.AddChild(srcEdit);
         panes.AddChild(srcCol);
         _srcEdit = srcEdit;
@@ -1091,6 +1203,34 @@ public static class TranslatorPanel
         ovHeader.AddChild(nextEmpty);
         ovCol.AddChild(ovHeader);
 
+        // 검색 줄: "게임에서 본 그 문장이 어느 항목이냐" 를 푸는 유일한 수단. 내비게이터 3종은
+        // 빈칸/원문변경/용어 불일치만 찾으므로, 이미 번역된 멀쩡한 줄은 어떤 버튼으로도 못 간다.
+        var findRow = new HBoxContainer();
+        findRow.AddChild(Lbl("Find:", GRAY));
+        _findEdit = new LineEdit
+        {
+            PlaceholderText = "text you saw in game — searches original, translation and key",
+            CustomMinimumSize = new Vector2(360, 36),
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+        };
+        // 타이핑 중에는 세고 칠하기만 한다(점프는 Enter/버튼). 칠하기가 즉시라서 "몇 번째 줄이냐"
+        // 를 묻기 전에 눈으로 먼저 보인다.
+        _findEdit.TextChanged += _ => { UpdateFindCount(); ApplyFindHighlight(); };
+        _findEdit.TextSubmitted += _ => JumpToNextMatch();    // Enter 반복 = 다음 일치
+        findRow.AddChild(_findEdit);
+        _findLbl = new Label();
+        _findLbl.AddThemeFontSizeOverride("font_size", 16);
+        findRow.AddChild(_findLbl);
+        var findNext = ActionButton("Find ▼");
+        findNext.CustomMinimumSize = new Vector2(110, 36);
+        findNext.TooltipText =
+            "Jump to the next entry containing this text (Enter does the same; Ctrl+F focuses the box).\n"
+            + "Matches the ORIGINAL text, your translation, or the key — so you can paste a line you saw\n"
+            + "in game even if you haven't translated it yet. Color tags and !D! placeholders are ignored.";
+        findNext.Pressed += () => JumpToNextMatch();
+        findRow.AddChild(findNext);
+        ovCol.AddChild(findRow);
+
         _editor = new CodeEdit
         {
             Text = TranslationStore.OverrideText(_mod.Id, _lang, _table),
@@ -1100,8 +1240,11 @@ public static class TranslatorPanel
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
         };
+        StyleFindHighlight(_editor);
         _editor.TextChanged += UpdateEmptyCount;
+        _editor.TextChanged += UpdateFindCount;
         _editor.CaretChanged += SyncRefToCaret; // 캐럿이 놓인 키를 참조 패널이 따라온다
+        _editor.GuiInput += FocusFindOnCtrlF;   // 편집 중 Ctrl+F → 검색 상자로
         ovCol.AddChild(_editor);
         UpdateStaleState(); // 원문 변경 항목 집합·카운트 계산(SyncRefToCaret 이 참조하기 전에)
         UpdateTermState();  // 용어집 불일치 항목 집합·카운트
@@ -1384,6 +1527,162 @@ public static class TranslatorPanel
         _editor.CenterViewportToCaret();
         _editor.GrabFocus();
         SetStatus($"Empty entry {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}).", true, false);
+    }
+
+    // ── 텍스트 검색 ─────────────────────────────────────────────
+    // "게임에서 본 이 문장이 어느 항목이냐" 를 푸는 경로. 내비게이터 3종(빈칸/원문변경/용어)은
+    // 문제 있는 항목만 짚으므로, 이미 번역돼 있지만 어색한 줄은 검색 말고는 도달할 방법이 없다.
+
+    /// <summary>편집기 줄에서 키와 값을 함께 뽑는다(ToPrettyJson 이 키당 한 줄을 보장).</summary>
+    private static readonly Regex EntryPairRx =
+        new(@"^\s*""((?:[^""\\]|\\.)+)""\s*:\s*""((?:[^""\\]|\\.)*)""\s*,?\s*$", RegexOptions.Compiled);
+
+    private static readonly Regex BbCodeRx = new(@"\[/?[^\[\]]{0,40}\]", RegexOptions.Compiled);
+    private static readonly Regex PlaceholderRx =
+        new(@"![A-Za-z0-9_]{1,12}!|\{[^{}]{0,80}\}", RegexOptions.Compiled);
+    private static readonly Regex SpaceRx = new(@"\s+", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 검색 비교용 정규화. 화면에 <b>보이지 않는</b> 것(JSON 이스케이프·<c>[color]</c> 태그·
+    /// <c>!D!</c>/<c>{…}</c> 자리표시자)을 지워, 게임에서 본 문장을 그대로 붙여넣어도 걸리게 한다.
+    /// 검색어와 대상 양쪽에 똑같이 적용해야 의미가 있다.
+    /// </summary>
+    private static string NormForFind(string s)
+    {
+        if (s.Length == 0) return "";
+        if (s.IndexOf('\\') >= 0)
+            s = s.Replace("\\n", " ").Replace("\\t", " ").Replace("\\\"", "\"").Replace("\\\\", "\\");
+        if (s.IndexOf('[') >= 0) s = BbCodeRx.Replace(s, " ");
+        if (s.IndexOf('!') >= 0 || s.IndexOf('{') >= 0) s = PlaceholderRx.Replace(s, " ");
+        return SpaceRx.Replace(s, " ").Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 검색어와 일치하는 항목 줄 목록. <b>원문·번역·키</b> 중 하나라도 포함하면 일치 —
+    /// 아직 번역하지 않은 항목은 화면에 원문이 그대로 나오므로 원문도 반드시 훑어야 한다.
+    /// </summary>
+    private static List<int> FindMatchLines(TextEdit ed, string needle)
+    {
+        var lines = new List<int>();
+        if (needle.Length == 0) return lines;
+        var src = _mod != null && _mod.EngByTable.TryGetValue(_table, out var e) ? e : null;
+        int n = ed.GetLineCount();
+        for (int i = 0; i < n; i++)
+        {
+            var m = EntryPairRx.Match(ed.GetLine(i));
+            if (!m.Success) continue;
+            string key = m.Groups[1].Value;
+            if (NormForFind(m.Groups[2].Value).Contains(needle, StringComparison.Ordinal)
+                || key.ToLowerInvariant().Contains(needle, StringComparison.Ordinal)
+                || (src != null && src.TryGetValue(key, out var orig)
+                    && NormForFind(orig).Contains(needle, StringComparison.Ordinal)))
+                lines.Add(i);
+        }
+        return lines;
+    }
+
+    /// <summary>검색어가 비면 아무 일도 하지 않는다(빈 검색어로 전 줄을 훑지 않도록 먼저 끊는다).</summary>
+    private static void UpdateFindCount()
+    {
+        if (_findEdit == null || !GodotObject.IsInstanceValid(_findEdit)) return;
+        if (_findLbl == null || !GodotObject.IsInstanceValid(_findLbl)) return;
+        _findQuery = NormForFind(_findEdit.Text);
+        if (_findQuery.Length == 0) { _findLbl.Text = ""; return; }
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        int n = FindMatchLines(_editor, _findQuery).Count;
+        _findLbl.Text = n == 0 ? "no match  " : $"{n} match{(n == 1 ? "" : "es")}  ";
+        _findLbl.AddThemeColorOverride("font_color", n == 0 ? GRAY : GOLD);
+    }
+
+    /// <summary>
+    /// 캐럿 다음의 일치 항목으로 점프(끝이면 처음으로 wrap). 참조 패널은 캐럿을 따라 같이 움직인다.
+    /// ★포커스는 검색 상자에 둔다 — Enter 를 계속 눌러 일치 항목을 순회하는 편이, 첫 일치에서
+    /// 편집기로 끌려가 Enter 가 줄바꿈이 돼 버리는 것보다 낫다(고칠 줄은 클릭해서 들어간다).
+    /// </summary>
+    private static void JumpToNextMatch()
+    {
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+        if (_findEdit == null || !GodotObject.IsInstanceValid(_findEdit)) return;
+        _findQuery = NormForFind(_findEdit.Text);
+        if (_findQuery.Length == 0)
+        {
+            SetStatus("Type the text you're looking for in the Find box.", true, false);
+            return;
+        }
+        var lines = FindMatchLines(_editor, _findQuery);
+        UpdateFindCount();
+        if (lines.Count == 0)
+        {
+            SetStatus(
+                $"Nothing in this file contains \"{Ellipsize(_findEdit.Text, 40)}\" — "
+                + "try a shorter phrase (a single distinctive word), or another file.",
+                true, false);
+            return;
+        }
+        int cur = _editor.GetCaretLine();
+        int next = lines.FirstOrDefault(l => l > cur, lines[0]); // wrap-around
+        SelectQueryInLine(_editor, next, _findEdit.Text.Trim());
+        _editor.CenterViewportToCaret();
+        ApplyFindHighlight();
+        SyncRefToCaret(); // 캐럿을 코드로 옮겼을 때 CaretChanged 가 안 오는 경우까지 대비
+        SetStatus($"Match {lines.IndexOf(next) + 1}/{lines.Count} (line {next + 1}). Enter for the next one.",
+            true, false);
+    }
+
+    /// <summary>
+    /// 검색어를 <b>양쪽 패널</b>(번역·참조)에 칠한다. Godot TextEdit 의 검색 하이라이트는
+    /// <b>있는 그대로</b> 대조하므로(정규화 없음), 마크업을 사이에 낀 문장은 점프는 되지만 칠해지지
+    /// 않는다 — 칠하기는 보조 신호고 판정은 <see cref="FindMatchLines"/> 가 한다. 대소문자는 무시.
+    /// </summary>
+    private static void ApplyFindHighlight()
+    {
+        string q = _findEdit != null && GodotObject.IsInstanceValid(_findEdit) ? _findEdit.Text.Trim() : "";
+        foreach (var ed in new[] { _editor, _srcEdit })
+        {
+            if (ed == null || !GodotObject.IsInstanceValid(ed)) continue;
+            ed.SetSearchFlags(0); // 대소문자·단어경계 무시 — 찾는 쪽 규칙과 맞춘다
+            ed.SetSearchText(q);
+            ed.QueueRedraw();
+        }
+    }
+
+    /// <summary>검색 하이라이트가 게임 패널(어두운 배경)에서 보이도록 색을 지정한다.</summary>
+    private static void StyleFindHighlight(TextEdit ed)
+    {
+        ed.AddThemeColorOverride("search_result_color", new Color(0.93f, 0.77f, 0.40f, 0.30f));
+        ed.AddThemeColorOverride("search_result_border_color", new Color(0.93f, 0.77f, 0.40f, 0.85f));
+    }
+
+    /// <summary>
+    /// 점프한 줄에서 검색어 자리를 실제로 선택해 준다(원문에만 걸린 경우엔 값 끝에 캐럿).
+    /// 하이라이트가 여러 개일 때 "지금 이거" 를 구분해 주는 역할.
+    /// </summary>
+    private static void SelectQueryInLine(TextEdit ed, int line, string rawQuery)
+    {
+        string text = ed.GetLine(line);
+        int at = rawQuery.Length == 0 ? -1 : text.IndexOf(rawQuery, StringComparison.OrdinalIgnoreCase);
+        if (at >= 0)
+        {
+            ed.SetCaretLine(line);
+            ed.SetCaretColumn(at + rawQuery.Length);
+            ed.Select(line, at, line, at + rawQuery.Length);
+            return;
+        }
+        ed.SetCaretLine(line);
+        int q = text.LastIndexOf('"');
+        ed.SetCaretColumn(Math.Max(0, q));
+        ed.Deselect();
+    }
+
+    /// <summary>편집기에서 Ctrl+F → 검색 상자로 포커스(이벤트를 소비해 'f' 가 입력되지 않게).</summary>
+    private static void FocusFindOnCtrlF(InputEvent e)
+    {
+        if (e is not InputEventKey k || !k.Pressed || k.Echo) return;
+        if (k.Keycode != Key.F || !k.CtrlPressed) return;
+        if (_findEdit == null || !GodotObject.IsInstanceValid(_findEdit)) return;
+        _findEdit.GrabFocus();
+        _findEdit.SelectAll();
+        _editor?.AcceptEvent();
     }
 
     // ── 자동 번역(DeepL) ────────────────────────────────────────
