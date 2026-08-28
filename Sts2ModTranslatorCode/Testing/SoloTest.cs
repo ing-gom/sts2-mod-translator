@@ -136,6 +136,20 @@ internal static class SoloTest
             }
             Assert(passed == cases.Length, $"DeepL safety token-preservation cases {passed}/{cases.Length}");
 
+            // DeepL 언어 매핑 커버리지 — 게임 언어 드롭다운(NLanguageDropdown)의 전 코드가
+            // target_lang 으로 매핑돼야 한다. 누락되면 auto-fill 이 그 언어에서 통째로 막힌다.
+            string[] gameLangs =
+            {
+                "ara", "ben", "cze", "deu", "dut", "eng", "esp", "fil", "fin", "fra",
+                "gre", "hin", "ind", "ita", "jpn", "kor", "mal", "nor", "pol", "por",
+                "ptb", "rus", "spa", "swe", "tha", "tur", "ukr", "vie", "zhs", "zht",
+            };
+            var unmapped = gameLangs.Where(l => AutoTranslator.DeepLTarget(l) == null).ToList();
+            Assert(unmapped.Count == 0,
+                unmapped.Count == 0
+                    ? $"DeepL target mapping covers all {gameLangs.Length} game languages"
+                    : "DeepL target mapping missing: " + string.Join(", ", unmapped));
+
             // ── 버전 기반 싱크 감지 ──────────────────────────────────
             Assert(TranslationStore.SameVersion("1.0.0", "1.0.0")
                    && TranslationStore.SameVersion("v1.0.0", "1.0.0")

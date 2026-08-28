@@ -57,45 +57,77 @@ public static class AutoTranslator
     private const int MaxBatchCount = 40;
     private const int MaxBatchChars = 90_000;
 
-    /// <summary>STS 언어 코드 → DeepL target_lang. 지원 안 하면 null(호출부가 안내).</summary>
+    /// <summary>
+    /// STS 언어 코드 → DeepL target_lang. 매핑 없으면 null(호출부가 안내).
+    /// 게임 언어 드롭다운(NLanguageDropdown)의 30개 코드를 전부 덮는다.
+    /// </summary>
     public static string? DeepLTarget(string stsLang) => (stsLang ?? "").ToLowerInvariant() switch
     {
-        "kor" => "KO",
-        "jpn" => "JA",
-        "zhs" or "chs" or "zh-hans" => "ZH-HANS",
-        "zht" or "cht" or "zh-hant" => "ZH-HANT",
-        "fra" or "fre" => "FR",
+        "ara" => "AR",
+        "ben" => "BN",
+        "cze" or "ces" => "CS",
         "deu" or "ger" => "DE",
-        "esp" or "spa" => "ES",
-        "rus" => "RU",
-        "ptb" => "PT-BR",
-        "por" => "PT-PT",
+        "eng" => "EN-US",
+        // 게임은 ESP=Español (Latinoamérica), SPA=Español (Castellano) 로 분리한다.
+        "esp" => "ES-419",
+        "spa" => "ES",
+        "fil" or "tgl" => "TL",
+        "fin" => "FI",
+        "fra" or "fre" => "FR",
+        "gre" or "ell" => "EL",
+        "hin" => "HI",
+        "ind" => "ID",
         "ita" => "IT",
-        "pol" => "PL",
+        "jpn" => "JA",
+        "kor" => "KO",
+        // 게임의 MAL 은 Bahasa Melayu(말레이어) — ISO 639-2 의 Malayalam 이 아니다.
+        "mal" or "msa" or "may" => "MS",
         "nld" or "dut" => "NL",
+        "nor" or "nob" => "NB",
+        "pol" => "PL",
+        "por" => "PT-PT",
+        "ptb" => "PT-BR",
+        "rus" => "RU",
+        "swe" => "SV",
+        "tha" => "TH",
         "tur" => "TR",
         "ukr" => "UK",
-        "eng" => "EN-US",
+        "vie" => "VI",
+        "zhs" or "chs" or "zh-hans" => "ZH-HANS",
+        "zht" or "cht" or "zh-hant" => "ZH-HANT",
         _ => null,
     };
 
     /// <summary>STS 원문 언어 → DeepL source_lang(지역 변형 없는 베이스). 모르면 null(자동 감지).</summary>
     private static string? SourceCode(string stsLang) => (stsLang ?? "").ToLowerInvariant() switch
     {
-        "eng" => "EN",
-        "kor" => "KO",
-        "jpn" => "JA",
-        "zhs" or "zht" or "chs" or "cht" => "ZH",
-        "fra" or "fre" => "FR",
+        "ara" => "AR",
+        "ben" => "BN",
+        "cze" or "ces" => "CS",
         "deu" or "ger" => "DE",
+        "eng" => "EN",
         "esp" or "spa" => "ES",
-        "rus" => "RU",
-        "ptb" or "por" => "PT",
+        "fil" or "tgl" => "TL",
+        "fin" => "FI",
+        "fra" or "fre" => "FR",
+        "gre" or "ell" => "EL",
+        "hin" => "HI",
+        "ind" => "ID",
         "ita" => "IT",
-        "pol" => "PL",
+        "jpn" => "JA",
+        "kor" => "KO",
+        "mal" or "msa" or "may" => "MS",
         "nld" or "dut" => "NL",
+        "nor" or "nob" => "NB",
+        "pol" => "PL",
+        "ptb" or "por" => "PT",
+        "rus" => "RU",
+        "swe" => "SV",
+        "tha" => "TH",
         "tur" => "TR",
         "ukr" => "UK",
+        "vie" => "VI",
+        "zhs" or "zht" or "chs" or "cht" => "ZH",
         _ => null,
     };
 
@@ -115,7 +147,7 @@ public static class AutoTranslator
 
         string? target = DeepLTarget(lang);
         if (target == null)
-            return (false, editorJson, 0, 0, $"DeepL does not support language '{lang}'.");
+            return (false, editorJson, 0, 0, $"This mod has no DeepL mapping for language '{lang}' yet.");
 
         Dictionary<string, string>? cur;
         try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(editorJson); }
@@ -158,7 +190,7 @@ public static class AutoTranslator
     {
         if (string.IsNullOrWhiteSpace(apiKey)) return (false, 0, 0, 0, "DeepL API key is not set.");
         string? target = DeepLTarget(lang);
-        if (target == null) return (false, 0, 0, 0, $"DeepL does not support language '{lang}'.");
+        if (target == null) return (false, 0, 0, 0, $"This mod has no DeepL mapping for language '{lang}' yet.");
         // 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다(폴더 이름 아님).
         // 혼합 원문은 항목별 언어가 달라 자동감지에 맡긴다(위 FillEditorAsync 와 동일 이유).
         string? source = mod.HasMixedSource ? null : SourceCode(mod.ContentLang);
@@ -355,6 +387,7 @@ public static class AutoTranslator
     {
         string hint = status switch
         {
+            400 => "DeepL rejected the request — this target language may be unavailable for your key.",
             401 or 403 => "Authentication failed — check your DeepL API key.",
             429 => "Too many requests — wait a moment and retry.",
             456 => "DeepL quota exceeded for this key (monthly character limit).",
