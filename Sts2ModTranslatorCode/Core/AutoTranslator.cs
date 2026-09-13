@@ -154,8 +154,76 @@ public static class AutoTranslator
         _ => null,
     };
 
-    /// <summary>이 (STS) 언어를 DeepL 로 번역할 수 있는지.</summary>
-    public static bool SupportsLanguage(string stsLang) => DeepLTarget(stsLang) != null;
+    /// <summary>
+    /// STS 언어 코드 → 프롬프트에 쓸 영문 언어명. OpenAI 호환 공급자는 벤더 코드가 아니라
+    /// 사람이 읽는 이름을 쓰므로 게임 언어 30종을 전부 덮는다. 모르면 코드 그대로.
+    /// </summary>
+    public static string LangName(string stsLang) => (stsLang ?? "").ToLowerInvariant() switch
+    {
+        "ara" => "Arabic",
+        "ben" => "Bengali",
+        "cze" or "ces" => "Czech",
+        "deu" or "ger" => "German",
+        "eng" => "English",
+        "esp" => "Latin American Spanish",
+        "spa" => "Castilian Spanish",
+        "fil" or "tgl" => "Filipino",
+        "fin" => "Finnish",
+        "fra" or "fre" => "French",
+        "gre" or "ell" => "Greek",
+        "hin" => "Hindi",
+        "ind" => "Indonesian",
+        "ita" => "Italian",
+        "jpn" => "Japanese",
+        "kor" => "Korean",
+        "mal" or "msa" or "may" => "Malay",
+        "nld" or "dut" => "Dutch",
+        "nor" or "nob" => "Norwegian Bokmal",
+        "pol" => "Polish",
+        "por" => "European Portuguese",
+        "ptb" => "Brazilian Portuguese",
+        "rus" => "Russian",
+        "swe" => "Swedish",
+        "tha" => "Thai",
+        "tur" => "Turkish",
+        "ukr" => "Ukrainian",
+        "vie" => "Vietnamese",
+        "zhs" or "chs" or "zh-hans" => "Simplified Chinese",
+        "zht" or "cht" or "zh-hant" => "Traditional Chinese",
+        _ => stsLang ?? "",
+    };
+
+    /// <summary>
+    /// 이 (STS) 언어를 현재 공급자로 번역할 수 있는지. DeepL 은 벤더 코드 매핑이 있어야 하고,
+    /// OpenAI 호환 공급자는 언어명만 있으면 되므로 사실상 전부 가능하다.
+    /// </summary>
+    public static bool SupportsLanguage(string stsLang, AutoConfig cfg) =>
+        cfg.Provider == AutoProvider.DeepL
+            ? DeepLTarget(stsLang) != null
+            : !string.IsNullOrWhiteSpace(stsLang);
+
+    /// <summary>
+    /// 설정과 대상 언어를 검사해 공급자별 target 문자열(DeepL 코드 / 영문 언어명)을 낸다.
+    /// 쓸 수 없으면 null + 사용자에게 보일 이유를 <paramref name="error"/> 에 담는다.
+    /// </summary>
+    private static string? ResolveTarget(string lang, AutoConfig cfg, out string error)
+    {
+        error = "";
+        if (cfg.Provider == AutoProvider.OpenAiCompatible)
+        {
+            if (string.IsNullOrWhiteSpace(cfg.BaseUrl) || string.IsNullOrWhiteSpace(cfg.Model))
+            {
+                error = "The AI endpoint isn't set up — fill in its address and model first.";
+                return null;
+            }
+            return LangName(lang);
+        }
+
+        if (string.IsNullOrWhiteSpace(cfg.DeepLKey)) { error = "DeepL API key is not set."; return null; }
+        string? t = DeepLTarget(lang);
+        if (t == null) error = $"This mod has no DeepL mapping for language '{lang}' yet.";
+        return t;
+    }
 
     /// <summary>
     /// 편집기 JSON(<paramref name="editorJson"/>)의 빈 값을 DeepL 로 채운 새 JSON 을 만든다.
@@ -163,14 +231,10 @@ public static class AutoTranslator
     /// 반환: (성공, 새 JSON 문자열, 채운 키 수, 검증 탈락 수, 오류메시지).
     /// </summary>
     public static async Task<(bool ok, string json, int count, int skipped, string error)> FillEditorAsync(
-        SupportedMod mod, string table, string lang, string editorJson, string apiKey)
+        SupportedMod mod, string table, string lang, string editorJson, AutoConfig cfg)
     {
-        if (string.IsNullOrWhiteSpace(apiKey))
-            return (false, editorJson, 0, 0, "DeepL API key is not set.");
-
-        string? target = DeepLTarget(lang);
-        if (target == null)
-            return (false, editorJson, 0, 0, $"This mod has no DeepL mapping for language '{lang}' yet.");
+        string? target = ResolveTarget(lang, cfg, out string cfgErr);
+        if (target == null) return (false, editorJson, 0, 0, cfgErr);
 
         Dictionary<string, string>? cur;
         try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(editorJson, LocJson.Read); }
@@ -186,7 +250,7 @@ public static class AutoTranslator
 
         try
         {
-            var (n, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
+            var (n, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, cfg);
             if (err.Length > 0) return (false, editorJson, 0, 0, err);
             if (n == 0 && skipped == 0)
                 return (false, editorJson, 0, 0,
@@ -209,11 +273,10 @@ public static class AutoTranslator
     /// 반환: (성공, 채운 항목 수, 검증 탈락 수, 채운 파일 수, 경고/오류 — 부분성공이면 마지막 오류를 경고로).
     /// </summary>
     public static async Task<(bool ok, int filled, int skipped, int files, string error)> FillAllTablesAsync(
-        SupportedMod mod, string lang, string apiKey, Action<int, int, string>? progress)
+        SupportedMod mod, string lang, AutoConfig cfg, Action<int, int, string>? progress)
     {
-        if (string.IsNullOrWhiteSpace(apiKey)) return (false, 0, 0, 0, "DeepL API key is not set.");
-        string? target = DeepLTarget(lang);
-        if (target == null) return (false, 0, 0, 0, $"This mod has no DeepL mapping for language '{lang}' yet.");
+        string? target = ResolveTarget(lang, cfg, out string cfgErr);
+        if (target == null) return (false, 0, 0, 0, cfgErr);
         // 실제 텍스트 언어(ContentLang)로 source_lang 을 잡는다(폴더 이름 아님).
         // 혼합 원문은 항목별 언어가 달라 자동감지에 맡긴다(위 FillEditorAsync 와 동일 이유).
         string? source = mod.HasMixedSource ? null : SourceCode(mod.ContentLang);
@@ -234,7 +297,7 @@ public static class AutoTranslator
             int n;
             try
             {
-                var (c, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, apiKey);
+                var (c, skipped, err) = await FillDictAsync(eng, cur, source, target, lang, cfg);
                 if (err.Length > 0) { lastErr = err; break; } // API 오류 → 나머지 중단
                 n = c;
                 totalSkipped += skipped;
@@ -316,7 +379,7 @@ public static class AutoTranslator
     /// </summary>
     private static async Task<(int count, int skipped, string error)> FillDictAsync(
         Dictionary<string, string> eng, Dictionary<string, string> cur,
-        string? source, string target, string stsTarget, string apiKey)
+        string? source, string target, string stsTarget, AutoConfig cfg)
     {
         // 대상 = 값이 비어 있고, 원문에 번역할 텍스트가 있는 키. 기존 키 순서를 유지.
         var keys = cur.Where(kv => string.IsNullOrEmpty(kv.Value)
@@ -341,9 +404,9 @@ public static class AutoTranslator
                 bytes += masked[i + n].Xml.Length;
                 n++;
             }
-            var outs = await TranslateBatch(batch, source, target, apiKey);
+            var outs = await TranslateBatch(batch, source, target, cfg);
             if (outs.Count != batch.Count)
-                return (0, 0, $"DeepL returned {outs.Count} results for {batch.Count} inputs.");
+                return (0, 0, $"{cfg.ProviderName} returned {outs.Count} results for {batch.Count} inputs.");
             for (int j = 0; j < n; j++) translated[i + j] = outs[j];
             i += n;
         }
@@ -351,12 +414,23 @@ public static class AutoTranslator
         int filled = 0, skipped = 0;
         for (int k = 0; k < keys.Count; k++)
         {
+            // 빈 결과 = 공급자가 그 항목을 빠뜨렸다는 뜻(LLM 은 항목을 합치거나 흘린다).
+            // 원문에 보존할 토큰이 없으면 빈 값도 IsSafeResult 를 통과해 "번역됨(빈칸)" 으로
+            // 잘못 집계되므로, 검증 전에 먼저 걸러 낸다.
+            if (string.IsNullOrWhiteSpace(translated[k]))
+            {
+                skipped++;
+                MainFile.Logger.Warn(
+                    $"[Sts2ModTranslator] {cfg.ProviderName} 가 항목을 비워 반환 — 빈칸 유지: {keys[k]}");
+                continue;
+            }
+
             string result = Unmask(translated[k], masked[k], stsTarget);
             if (!IsSafeResult(eng[keys[k]], result))
             {
                 skipped++;
                 MainFile.Logger.Warn(
-                    $"[Sts2ModTranslator] DeepL result failed the format safety check — left empty: {keys[k]}");
+                    $"[Sts2ModTranslator] {cfg.ProviderName} result failed the format safety check — left empty: {keys[k]}");
                 continue;
             }
             cur[keys[k]] = result;
@@ -365,8 +439,18 @@ public static class AutoTranslator
         return (filled, skipped, "");
     }
 
+    /// <summary>
+    /// 선택된 공급자로 한 배치를 번역한다. 반환 목록은 <b>입력과 같은 길이·같은 순서</b>여야 하며,
+    /// 공급자가 빠뜨린 항목은 빈 문자열로 채워진다(호출부가 그 항목만 빈칸으로 남긴다).
+    /// </summary>
+    private static Task<List<string>> TranslateBatch(
+        List<string> xmls, string? source, string target, AutoConfig cfg) =>
+        cfg.Provider == AutoProvider.OpenAiCompatible
+            ? TranslateBatchOpenAi(xmls, target, cfg)
+            : TranslateBatchDeepL(xmls, source, target, cfg.DeepLKey);
+
     // ── DeepL 호출 ──────────────────────────────────────────────
-    private static async Task<List<string>> TranslateBatch(
+    private static async Task<List<string>> TranslateBatchDeepL(
         List<string> xmls, string? source, string target, string key)
     {
         string trimmed = key.Trim();
@@ -442,6 +526,169 @@ public static class AutoTranslator
         };
         string snippet = body.Length > 200 ? body.Substring(0, 200) : body;
         return $"{hint} (HTTP {status}) {snippet}".Trim();
+    }
+
+    // ── OpenAI 호환 엔드포인트 호출 ─────────────────────────────
+    //
+    // ★왜 이 형식인가: OpenAI 의 /chat/completions 요청 모양이 사실상 표준이라, 사용자가
+    //   주소·모델·키만 넣으면 상용(OpenAI·OpenRouter…)부터 로컬(Ollama·LM Studio)까지
+    //   같은 코드로 붙는다. DeepL 이 서비스하지 않는 지역의 탈출구가 된다.
+    //
+    // ★순서 보장: DeepL 은 translations[] 를 요청 순서대로 1:1 로 준다. LLM 은 그렇지 않다 —
+    //   항목을 합치거나 흘린다. 그래서 입출력을 모두 <b>번호를 키로 하는 JSON 객체</b>로
+    //   주고받고, 빠진 번호는 빈 문자열로 채워 그 항목만 빈칸으로 남긴다(배치 전체 실패 아님).
+    //
+    // ★response_format 을 보내지 않는 이유: 호환 서버 중 이 필드를 모르면 400 으로 거절하는
+    //   구현이 있다. 호환성이 이 기능의 존재 이유이므로 프롬프트로 지시하고 응답은 관대하게 판다.
+
+    private static string SystemPrompt(string langName) =>
+        $"You translate text from a video game into {langName}.\n"
+        + "You are given a JSON object whose keys are item numbers. Reply with ONLY a JSON object "
+        + "using the same keys, where each value is that item's translation.\n"
+        + "Rules:\n"
+        + "- Translate every item. If you truly cannot translate one, omit its key entirely.\n"
+        + "- Keep every <ph>...</ph> and <gN>...</gN> tag exactly as it appears, with the same "
+        + "numbers and the same count. Never translate, reorder, renumber, add or drop them.\n"
+        + "- Text inside <ph>...</ph> is a placeholder token. Copy it verbatim.\n"
+        + "- Translate only the human-readable words. Add no notes, no explanations, no markdown.";
+
+    /// <summary>
+    /// 채팅 요청 본문 직렬화 옵션. ★HTML-safe 기본 이스케이프를 끈다 — 켜 두면 마스킹 태그가
+    /// <c>&lt;ph&gt;</c> 가 아니라 <c>\u003Cph\u003E</c> 로 실려 나가 모델이 <b>실제 태그를 보지 못한다</b>.
+    /// 모델이 본 대로 <c>\u003C…</c> 를 그대로 돌려주면 Unmask 가 태그를 못 찾아 안전검사에서 전부
+    /// 탈락하고, 결과적으로 모든 항목이 빈칸이 된다. (본문은 application/json 이라 HTML 이스케이프가
+    /// 필요 없다 — 루프백 end-to-end 테스트로 잡은 결함.)
+    /// </summary>
+    private static readonly JsonSerializerOptions ChatJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    private static async Task<List<string>> TranslateBatchOpenAi(
+        List<string> xmls, string langName, AutoConfig cfg)
+    {
+        string url = AutoConfig.ChatUrl(cfg.BaseUrl);
+        if (url.Length == 0) throw new Exception("The AI endpoint address is empty.");
+
+        // 입력을 번호 키 JSON 으로. (구분자 기반으로 넘기면 본문에 줄바꿈이 있을 때 깨진다.)
+        var inObj = new Dictionary<string, string>();
+        for (int i = 0; i < xmls.Count; i++) inObj[(i + 1).ToString()] = xmls[i];
+
+        var payload = new Dictionary<string, object>
+        {
+            ["model"] = cfg.Model.Trim(),
+            ["temperature"] = 0,
+            ["messages"] = new object[]
+            {
+                new Dictionary<string, string> { ["role"] = "system", ["content"] = SystemPrompt(langName) },
+                new Dictionary<string, string> { ["role"] = "user",
+                    ["content"] = JsonSerializer.Serialize(inObj, ChatJson) },
+            },
+        };
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(payload, ChatJson), Encoding.UTF8, "application/json"),
+        };
+        string key = (cfg.ApiKey ?? "").Trim();
+        if (key.Length > 0) req.Headers.TryAddWithoutValidation("Authorization", "Bearer " + key);
+
+        HttpResponseMessage resp;
+        try { resp = await Http.SendAsync(req); }
+        catch (TaskCanceledException)
+        {
+            throw new Exception($"Couldn't reach the AI endpoint — the request timed out. ({url})");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"Couldn't reach the AI endpoint — {ex.Message} ({url})");
+        }
+
+        using (resp)
+        {
+            string body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+            {
+                string snippet = body.Length > 300 ? body.Substring(0, 300) : body;
+                throw new Exception(
+                    $"The AI endpoint rejected the request (HTTP {(int)resp.StatusCode}). "
+                    + $"Check the address, the model name and the key. {snippet}".Trim());
+            }
+            return ParseChatTranslations(body, xmls.Count);
+        }
+    }
+
+    /// <summary>
+    /// chat/completions 응답에서 번호 키 JSON 을 뽑아 입력 개수만큼의 목록으로 만든다.
+    /// 빠진 번호·형식 붕괴는 <b>예외가 아니라 빈 문자열</b>로 돌려준다 — 한 항목의 실패가
+    /// 배치 전체를 죽이지 않게(호출부가 그 항목만 빈칸으로 남긴다).
+    /// </summary>
+    internal static List<string> ParseChatTranslations(string body, int expected)
+    {
+        // ★null 이 아니라 빈 문자열로 채운다 — 반환 계약이 "빠진 항목 = 빈 문자열" 이고,
+        // null 이 섞이면 호출부/테스트가 계약과 어긋난다.
+        var outs = Enumerable.Repeat(string.Empty, expected).ToList();
+        string content;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("choices", out var ch)
+                || ch.ValueKind != JsonValueKind.Array || ch.GetArrayLength() == 0)
+                throw new Exception("the response had no 'choices'");
+            content = ch[0].TryGetProperty("message", out var msg)
+                      && msg.TryGetProperty("content", out var c)
+                ? c.GetString() ?? "" : "";
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"The AI endpoint returned something unexpected — {ex.Message}.");
+        }
+
+        // 모델이 ```json 펜스나 잡담을 섞는 경우가 흔하다 → 첫 '{' 부터 마지막 '}' 까지만 판다.
+        int a = content.IndexOf('{'), b = content.LastIndexOf('}');
+        if (a < 0 || b <= a)
+        {
+            MainFile.Logger.Warn("[Sts2ModTranslator] AI 응답에 JSON 객체가 없음 — 배치 전체를 빈칸 처리.");
+            return outs;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(content.Substring(a, b - a + 1));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return outs;
+            for (int i = 0; i < expected; i++)
+                if (doc.RootElement.TryGetProperty((i + 1).ToString(), out var v)
+                    && v.ValueKind == JsonValueKind.String)
+                    outs[i] = v.GetString() ?? "";
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] AI 응답 JSON 파싱 실패 — 빈칸 처리: {ex.Message}");
+        }
+        return outs;
+    }
+
+    /// <summary>
+    /// 설정이 실제로 동작하는지 짧은 문장 하나로 왕복 확인한다. 주소·모델명 오타는 BYO 엔드포인트의
+    /// 1순위 실패 모드인데, 번역을 통째로 돌려 본 뒤에야 알게 되면 진단이 어렵다.
+    /// 반환: (성공, 사용자에게 보일 메시지).
+    /// </summary>
+    public static async Task<(bool ok, string message)> TestAsync(string lang, AutoConfig cfg)
+    {
+        string? target = ResolveTarget(lang, cfg, out string err);
+        if (target == null) return (false, err);
+
+        const string probe = "Deal <ph>{0}</ph> damage.";
+        try
+        {
+            var outs = await TranslateBatch(new List<string> { probe }, "EN", target, cfg);
+            if (outs.Count != 1 || string.IsNullOrWhiteSpace(outs[0]))
+                return (false, $"{cfg.ProviderName} connected but returned nothing. "
+                               + "If this is an AI endpoint, try a different model.");
+            return (true, $"OK — \"{probe}\" → \"{outs[0].Trim()}\"");
+        }
+        catch (Exception ex) { return (false, ex.Message); }
     }
 
     // ── 토큰 마스킹 ─────────────────────────────────────────────

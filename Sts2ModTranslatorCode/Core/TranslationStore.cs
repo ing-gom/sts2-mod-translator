@@ -800,6 +800,56 @@ public static class TranslationStore
     }
 
     /// <summary>
+    /// 자동 번역 설정(공급자 선택 + OpenAI 호환 엔드포인트)을 읽는다.
+    /// DeepL 키는 기존 파일에서 그대로 읽어 합친다 — 파일이 없던 기존 사용자도 설정 없이 계속 동작.
+    /// 이 설정들은 루트 파일이므로 내보내는 번역 모드에는 포함되지 않는다(내보내기는 translations/ 만 쓴다).
+    /// </summary>
+    public static AutoConfig LoadAutoConfig()
+    {
+        var cfg = new AutoConfig { DeepLKey = LoadApiKey() };
+        try
+        {
+            string p = ReadPath(Path.Combine(Root, "auto_provider" + DataExt));
+            if (!File.Exists(p)) return cfg;
+            var d = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                File.ReadAllText(p, Encoding.UTF8), LocJson.Read);
+            if (d == null) return cfg;
+
+            if (d.TryGetValue("provider", out var pv)
+                && string.Equals(pv, "openai", StringComparison.OrdinalIgnoreCase))
+                cfg.Provider = AutoProvider.OpenAiCompatible;
+            if (d.TryGetValue("baseUrl", out var b)) cfg.BaseUrl = b ?? "";
+            if (d.TryGetValue("model", out var m)) cfg.Model = m ?? "";
+            if (d.TryGetValue("apiKey", out var k)) cfg.ApiKey = k ?? "";
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] 자동 번역 설정 로드 실패(기본값 사용): {ex.Message}");
+        }
+        return cfg;
+    }
+
+    /// <summary>자동 번역 설정을 저장한다. DeepL 키는 기존 파일로 따로 나간다.</summary>
+    public static void SaveAutoConfig(AutoConfig cfg)
+    {
+        SaveApiKey(cfg.DeepLKey);
+        try
+        {
+            WriteJson(Path.Combine(Root, "auto_provider" + DataExt), new Dictionary<string, string>
+            {
+                ["provider"] = cfg.Provider == AutoProvider.OpenAiCompatible ? "openai" : "deepl",
+                ["baseUrl"] = (cfg.BaseUrl ?? "").Trim(),
+                ["model"] = (cfg.Model ?? "").Trim(),
+                ["apiKey"] = (cfg.ApiKey ?? "").Trim(),
+            });
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] 자동 번역 설정 저장 실패: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// 한 대상 모드의 (비어 있지 않은) 번역을 배포 가능한 독립 "번역 모드" 폴더로 내보낸다.
     /// 결과 레이아웃:
     ///   {destRoot}/{modId}_Translation/

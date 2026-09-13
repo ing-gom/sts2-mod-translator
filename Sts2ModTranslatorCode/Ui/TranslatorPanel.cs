@@ -405,9 +405,11 @@ public static class TranslatorPanel
         var footer = new HBoxContainer();
         var of = ActionButton("Open Folder"); of.Pressed += OpenFolder;
         var rl = ActionButton("Reload"); rl.Pressed += () => { int n = TranslationSync.ReloadFromDisk(); SetStatus(WithFormatWarning($"Reloaded {n} keys."), true, TranslationSync.LastInjectInvalidCount > 0); };
-        var dk = ActionButton(TranslationStore.LoadApiKey().Length > 0 ? "DeepL key ✓" : "DeepL key…");
-        dk.CustomMinimumSize = new Vector2(150, 40);
-        dk.TooltipText = "Set the DeepL API key used by the editor's Auto-fill button.";
+        var autoCfg = TranslationStore.LoadAutoConfig();
+        var dk = ActionButton(autoCfg.IsReady ? $"{autoCfg.ProviderName} ✓" : "Auto-fill setup…");
+        dk.CustomMinimumSize = new Vector2(170, 40);
+        dk.TooltipText = "Pick what the Auto-fill buttons translate with: DeepL, or any "
+            + "OpenAI-compatible endpoint (a hosted service or a local model).";
         dk.Pressed += () => PromptApiKey(() => { if (_view == View.Mods) RebuildContent(); });
         var ai = ActionButton("Translate with AI…");
         ai.CustomMinimumSize = new Vector2(180, 40);
@@ -985,11 +987,12 @@ public static class TranslatorPanel
         var mod = _mod; string lang = _lang;
         var autoAll = ActionButton("Auto-fill all ✨");
         autoAll.CustomMinimumSize = new Vector2(180, 40);
-        bool hasKeyF = TranslationStore.LoadApiKey().Length > 0;
+        var cfgF = TranslationStore.LoadAutoConfig();
+        bool hasKeyF = cfgF.IsReady;
         autoAll.Disabled = !hasKeyF;
         autoAll.TooltipText = hasKeyF
-            ? "Machine-translate every empty entry across all files with DeepL, then save."
-            : "Set your DeepL API key first — use the \"DeepL key…\" button on the mods list.";
+            ? $"Machine-translate every empty entry across all files with {cfgF.ProviderName}, then save."
+            : "Set up auto-fill first — use the \"Auto-fill setup…\" button on the mods list.";
         autoAll.Pressed += () => OnAutoFillAll(autoAll);
         var resetAll = ActionButton("Reset all files");
         resetAll.Pressed += () => Confirm(
@@ -1258,11 +1261,12 @@ public static class TranslatorPanel
         var save = ActionButton("Save"); save.Pressed += SaveEditor;
         var auto = ActionButton("Auto-fill ✨");
         auto.CustomMinimumSize = new Vector2(150, 40);
-        bool hasKeyE = TranslationStore.LoadApiKey().Length > 0;
+        var cfgE = TranslationStore.LoadAutoConfig();
+        bool hasKeyE = cfgE.IsReady;
         auto.Disabled = !hasKeyE;
         auto.TooltipText = hasKeyE
-            ? "Machine-translate the empty entries with DeepL (draft — review, then Save)."
-            : "Set your DeepL API key first — use the \"DeepL key…\" button on the mods list.";
+            ? $"Machine-translate the empty entries with {cfgE.ProviderName} (draft — review, then Save)."
+            : "Set up auto-fill first — use the \"Auto-fill setup…\" button on the mods list.";
         auto.Pressed += () => OnAutoFill(auto);
         var reload = ActionButton("Reload File"); reload.Pressed += () =>
         {
@@ -1707,10 +1711,16 @@ public static class TranslatorPanel
         };
         var box = new VBoxContainer();
         box.AddChild(LblWrap(err, GRAY, 640));
-        box.AddChild(Lbl("This usually isn't your key. Two ways forward:", WHITE));
+        box.AddChild(Lbl("This usually isn't your key. Three ways forward:", WHITE));
         box.AddChild(Lbl("  ·  Turn on a VPN and press Auto-fill again, or", WHITE));
+        box.AddChild(Lbl("  ·  Switch Auto-fill to an AI endpoint — \"Auto-fill setup…\" on the", WHITE));
+        box.AddChild(Lbl("       mods list. A model on your own PC needs no key and no internet, or", WHITE));
         box.AddChild(Lbl("  ·  Hand the files to an AI agent — no API key, no DeepL.", WHITE));
         dlg.AddChild(box);
+
+        var swap = ActionButton("Auto-fill setup…");
+        swap.Pressed += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); PromptApiKey(); };
+        box.AddChild(swap);
 
         dlg.Confirmed += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); PromptAiKit(); };
         dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
@@ -1726,13 +1736,13 @@ public static class TranslatorPanel
     {
         if (_autoBusy || _mod == null || _editor == null) return;
 
-        string key = TranslationStore.LoadApiKey();
-        if (key.Length == 0)
+        var cfg = TranslationStore.LoadAutoConfig();
+        if (!cfg.IsReady)
         {
-            PromptApiKey(() => OnAutoFill(btn)); // 키 저장 후 같은 동작 재시도
+            PromptApiKey(() => OnAutoFill(btn)); // 설정 후 같은 동작 재시도
             return;
         }
-        if (!AutoTranslator.SupportsLanguage(_lang))
+        if (!AutoTranslator.SupportsLanguage(_lang, cfg))
         {
             SetStatus($"DeepL doesn't support '{_lang}'. You can still translate it by hand.", true, true);
             return;
@@ -1745,7 +1755,7 @@ public static class TranslatorPanel
 
         _ = Task.Run(async () =>
         {
-            var (ok, json, n, skipped, err) = await AutoTranslator.FillEditorAsync(mod, table, lang, text, key);
+            var (ok, json, n, skipped, err) = await AutoTranslator.FillEditorAsync(mod, table, lang, text, cfg);
             // await 이후 연속실행은 Godot 메인 스레드가 아닐 수 있다 → 노드 접근은 CallDeferred 로 마샬.
             Callable.From(() =>
             {
@@ -1780,9 +1790,9 @@ public static class TranslatorPanel
     {
         if (_autoBusy || _mod == null) return;
 
-        string key = TranslationStore.LoadApiKey();
-        if (key.Length == 0) { PromptApiKey(() => OnAutoFillAll(btn)); return; }
-        if (!AutoTranslator.SupportsLanguage(_lang))
+        var cfg = TranslationStore.LoadAutoConfig();
+        if (!cfg.IsReady) { PromptApiKey(() => OnAutoFillAll(btn)); return; }
+        if (!AutoTranslator.SupportsLanguage(_lang, cfg))
         {
             SetStatus($"DeepL doesn't support '{_lang}'. You can still translate it by hand.", true, true);
             return;
@@ -1802,7 +1812,7 @@ public static class TranslatorPanel
                 _ = Task.Run(async () =>
                 {
                     var (ok, filled, skipped, files, err) = await AutoTranslator.FillAllTablesAsync(
-                        mod, lang, key,
+                        mod, lang, cfg,
                         (i, n, t) => Callable.From(() =>
                             SetStatus($"Translating {i}/{n}: {t}.json…", true, false)).CallDeferred());
                     Callable.From(() =>
@@ -1826,60 +1836,166 @@ public static class TranslatorPanel
     }
 
     /// <summary>
-    /// DeepL API 키 입력 모달(AcceptDialog + LineEdit). 저장 시 onSaved 실행.
+    /// 자동 번역 설정 모달. 공급자(DeepL / OpenAI 호환 엔드포인트)를 고르고 그에 맞는 칸을 채운다.
+    /// 저장 시 onSaved 실행.
     ///
-    /// ★단계를 전부 적는 이유: "deepl.com/pro-api 에서 받으세요" 한 줄로는 아무도 못 받는다.
+    /// ★DeepL 단계를 전부 적는 이유: "deepl.com/pro-api 에서 받으세요" 한 줄로는 아무도 못 받는다.
     /// 실제로 한 유저가 워크샵 댓글에 5문단짜리 가이드를 대신 써 줬다 — 걸림돌은 ①요금제를
     /// 고르기 전에는 키가 생성되지 않는다는 점, ②키 위치(계정 ▸ API 키), ③차단 지역이라는 점.
     /// 주소는 클립보드에 자동 복사하지 <b>않는다</b>(키를 복사해 온 사용자의 클립보드를 덮어쓰게 된다).
+    ///
+    /// ★연결 테스트를 둔 이유: 엔드포인트를 사용자가 직접 넣는 구조라 주소·모델명 오타가 1순위
+    /// 실패 모드인데, 번역을 통째로 돌린 뒤에야 알게 되면 원인을 짚기 어렵다. v1.18.2 가 고친 게
+    /// 바로 "불친절한 오류로 사용자가 막히는" 문제였으므로 같은 실수를 반복하지 않는다.
     /// </summary>
     private static void PromptApiKey(Action? onSaved = null)
     {
         if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+        var cfg = TranslationStore.LoadAutoConfig();
+
         var dlg = new AcceptDialog
         {
-            Title = "DeepL API key",
+            Title = "Auto-fill setup",
             OkButtonText = "Save",
-            MinSize = new Vector2I(700, 0),
+            MinSize = new Vector2I(720, 0),
         };
         var box = new VBoxContainer();
-        box.AddChild(Lbl("The free tier (500,000 chars/month) is plenty. Getting a key, step by step:", GRAY));
-        box.AddChild(Lbl("  1.  Open the page below and sign up   (a Google account works).", WHITE));
-        box.AddChild(Lbl("  2.  Pick the free plan — \"API Free\".  No plan, no key: it is only", WHITE));
-        box.AddChild(Lbl("        created once a plan is chosen. The signup form asks for an address.", WHITE));
-        box.AddChild(Lbl("  3.  Go to  Account ▸ API keys  and copy the key.", WHITE));
-        box.AddChild(Lbl("  4.  Paste it below. Free keys end with  ':fx'  — keep that part.", WHITE));
 
+        // ── 공급자 선택 ──
+        box.AddChild(Lbl("What should Auto-fill translate with?", WHITE));
+        var pick = new OptionButton { CustomMinimumSize = new Vector2(660, 38) };
+        pick.AddItem("DeepL  —  best pure translation quality", 0);
+        pick.AddItem("AI endpoint  —  any OpenAI-compatible service, or a local model", 1);
+        pick.Selected = cfg.Provider == AutoProvider.OpenAiCompatible ? 1 : 0;
+        box.AddChild(pick);
+
+        // ── DeepL 칸 ──
+        var deepl = new VBoxContainer();
+        deepl.AddChild(Lbl("The free tier (500,000 chars/month) is plenty. Getting a key, step by step:", GRAY));
+        deepl.AddChild(Lbl("  1.  Open the page below and sign up   (a Google account works).", WHITE));
+        deepl.AddChild(Lbl("  2.  Pick the free plan — \"API Free\".  No plan, no key: it is only", WHITE));
+        deepl.AddChild(Lbl("        created once a plan is chosen. The signup form asks for an address.", WHITE));
+        deepl.AddChild(Lbl("  3.  Go to  Account ▸ API keys  and copy the key.", WHITE));
+        deepl.AddChild(Lbl("  4.  Paste it below. Free keys end with  ':fx'  — keep that part.", WHITE));
         var url = new LineEdit
         {
             Text = AutoTranslator.SignupUrl,
             Editable = false,
             CustomMinimumSize = new Vector2(640, 36),
         };
-        box.AddChild(url);
+        deepl.AddChild(url);
         var open = ActionButton("Open in browser");
         open.Pressed += () =>
         {
             try { OS.ShellOpen(AutoTranslator.SignupUrl); }
             catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] 브라우저 열기 실패: {ex.Message}"); }
         };
-        box.AddChild(open);
-
-        box.AddChild(LblWrap(AutoTranslator.RegionNote, GOLD, 640));
-        box.AddChild(Lbl("Stored locally only; never bundled into exports.", GRAY));
-        var le = new LineEdit
+        deepl.AddChild(open);
+        deepl.AddChild(LblWrap(AutoTranslator.RegionNote, GOLD, 640));
+        var keyEdit = new LineEdit
         {
-            Text = TranslationStore.LoadApiKey(),
+            Text = cfg.DeepLKey,
             PlaceholderText = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
             CustomMinimumSize = new Vector2(640, 36),
         };
-        box.AddChild(le);
+        deepl.AddChild(keyEdit);
+        box.AddChild(deepl);
+
+        // ── OpenAI 호환 칸 ──
+        var ai = new VBoxContainer();
+        ai.AddChild(LblWrap(
+            "Anything that speaks the OpenAI /chat/completions format works: a hosted service "
+            + "(OpenAI, OpenRouter, Together…) or a model running on your own PC (Ollama, LM Studio). "
+            + "A local model needs no key and no internet — which is also the way around DeepL "
+            + "not being available in your region.", GRAY, 660));
+        ai.AddChild(Lbl("Address  (a bare host gets /v1 added for you)", WHITE));
+        var baseEdit = new LineEdit
+        {
+            Text = cfg.BaseUrl,
+            PlaceholderText = "https://api.openai.com/v1     or     http://localhost:11434",
+            CustomMinimumSize = new Vector2(640, 36),
+        };
+        ai.AddChild(baseEdit);
+        ai.AddChild(Lbl("Model", WHITE));
+        var modelEdit = new LineEdit
+        {
+            Text = cfg.Model,
+            PlaceholderText = "gpt-4o-mini     /     qwen2.5:7b",
+            CustomMinimumSize = new Vector2(640, 36),
+        };
+        ai.AddChild(modelEdit);
+        ai.AddChild(Lbl("Key  (leave empty for a local model)", WHITE));
+        var aiKeyEdit = new LineEdit
+        {
+            Text = cfg.ApiKey,
+            PlaceholderText = "sk-…",
+            CustomMinimumSize = new Vector2(640, 36),
+        };
+        ai.AddChild(aiKeyEdit);
+        ai.AddChild(LblWrap(
+            "A weaker model simply leaves more entries blank — results that break the text are "
+            + "rejected, never saved. If you see a lot of \"left empty\", try a stronger model.",
+            GRAY, 660));
+        box.AddChild(ai);
+
+        // ── 연결 테스트 ──
+        var testRow = new HBoxContainer();
+        var test = ActionButton("Test connection");
+        testRow.AddChild(test);
+        box.AddChild(testRow);
+        var testOut = LblWrap("", GRAY, 660);
+        box.AddChild(testOut);
+
+        // 지금 화면에 입력된 값으로 설정을 만든다(저장 전에 시험해 볼 수 있도록).
+        AutoConfig Current() => new()
+        {
+            Provider = pick.Selected == 1 ? AutoProvider.OpenAiCompatible : AutoProvider.DeepL,
+            DeepLKey = keyEdit.Text,
+            BaseUrl = baseEdit.Text,
+            Model = modelEdit.Text,
+            ApiKey = aiKeyEdit.Text,
+        };
+
+        void ShowSection()
+        {
+            bool isAi = pick.Selected == 1;
+            deepl.Visible = !isAi;
+            ai.Visible = isAi;
+            testOut.Text = "";
+        }
+        pick.ItemSelected += _ => ShowSection();
+        ShowSection();
+
+        test.Pressed += () =>
+        {
+            var probe = Current();
+            string lang = TranslationSync.CurrentLanguage();
+            test.Disabled = true;
+            testOut.AddThemeColorOverride("font_color", GRAY);
+            testOut.Text = "Testing…";
+            _ = Task.Run(async () =>
+            {
+                var (ok, msg) = await AutoTranslator.TestAsync(lang, probe);
+                // await 이후는 메인 스레드가 아닐 수 있다 → 노드 접근은 마샬.
+                Callable.From(() =>
+                {
+                    if (!GodotObject.IsInstanceValid(test)) return;
+                    test.Disabled = false;
+                    if (!GodotObject.IsInstanceValid(testOut)) return;
+                    testOut.AddThemeColorOverride("font_color", ok ? GOLD : RED);
+                    testOut.Text = msg;
+                }).CallDeferred();
+            });
+        };
+
+        box.AddChild(Lbl("Stored locally only; never bundled into exports.", GRAY));
         dlg.AddChild(box);
 
         dlg.Confirmed += () =>
         {
-            TranslationStore.SaveApiKey(le.Text);
-            if (le.Text.Trim().Length > 0) onSaved?.Invoke();
+            var saved = Current();
+            TranslationStore.SaveAutoConfig(saved);
+            if (saved.IsReady) onSaved?.Invoke();
             if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree();
         };
         dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };

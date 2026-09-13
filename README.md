@@ -59,11 +59,28 @@ Mods change. When the mod you translated ships a new version, its row is tagged 
 
 The built-in keyword glossary already pins the game's own terms (`Vulnerable` → the official word in your language). For a mod's **own** terms — character names, unique mechanics — press **Glossary…** on the file list and add lines like `Artoria = 아르토리아`. Any entry whose original uses a term but whose translation doesn't use your wording is flagged, with a **Next term ▼** navigator and an inline hint in the reference header telling you the term to use. It's advisory (it never rewrites your text) and works no matter how the translation was made — DeepL, an AI agent, or by hand. The glossary lives in the workspace, so the AI agent picks it up automatically. Local-only; it isn't bundled into exported packs.
 
-### Machine-translation drafts (DeepL)
+### Machine-translation drafts
 
-To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:
+To speed up a first pass, the editor can pre-fill **empty** entries automatically.
+Press **Auto-fill setup…** on the mods list and pick what does the translating:
 
-- Set your DeepL API key once (**DeepL key…** on the mods list — the free tier's 500,000 chars/month is plenty).
+| | Good for |
+|---|---|
+| **DeepL** (default) | Best pure translation quality. Needs an API key; not available in every region. |
+| **AI endpoint** | Anything that speaks the OpenAI `/chat/completions` format — a hosted service (OpenAI, OpenRouter, Together…) **or a model running on your own PC** (Ollama, LM Studio). A local model needs no key and no internet, which is also the way around DeepL not serving your region. |
+
+For an AI endpoint you give three things: the **address** (a bare host like
+`http://localhost:11434` gets `/v1` added for you), the **model** name, and a **key**
+(leave empty for a local model). **Test connection** sends one short line and shows you
+the round trip, so a typo in the address or model name surfaces immediately instead of
+halfway through a batch.
+
+Either way the same protections apply: placeholders and markup are preserved, the game's
+official terms are enforced afterwards, and any result that would break the text is
+**rejected and left blank rather than saved**. A weaker model therefore doesn't corrupt
+anything — it just leaves more entries empty, which the blank counter shows you.
+
+- Set your provider up once (**Auto-fill setup…** on the mods list — DeepL's free tier is 500,000 chars/month).
 - **Auto-fill ✨** drafts the open file; **Auto-fill all ✨** drafts every file for the current language. Existing translations are never overwritten — only blanks are filled, as a draft to review.
 - **Keyword accuracy:** highlighted game keywords (`Vulnerable`, `Block`, `Exhaust`, …) are corrected to the game's own official term in your language — extracted from the game's localization for 13 languages — so drafts match in-game wording even when the machine translation doesn't.
 - **Placeholders** (`!D!`, `[color]…[/color]`, `{…}`) are protected so the translation can't corrupt them.

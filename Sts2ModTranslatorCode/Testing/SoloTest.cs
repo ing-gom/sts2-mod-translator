@@ -16,7 +16,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Localization;
@@ -149,6 +152,149 @@ internal static class SoloTest
                 unmapped.Count == 0
                     ? $"DeepL target mapping covers all {gameLangs.Length} game languages"
                     : "DeepL target mapping missing: " + string.Join(", ", unmapped));
+
+            // OpenAI 호환 공급자는 벤더 코드가 아니라 영문 언어명을 프롬프트에 쓴다.
+            // 매핑이 빠지면 코드가 그대로 새어 나가 ("ptb 로 번역하라") 번역 품질이 조용히 망가진다.
+            var unnamed = gameLangs
+                .Where(l => string.Equals(AutoTranslator.LangName(l), l, StringComparison.Ordinal))
+                .ToList();
+            Assert(unnamed.Count == 0,
+                unnamed.Count == 0
+                    ? $"LangName covers all {gameLangs.Length} game languages"
+                    : "LangName missing (falls back to raw code): " + string.Join(", ", unnamed));
+
+            // 엔드포인트 주소 정규화 — 사용자가 넣는 흔한 형태를 전부 흡수해야 한다.
+            (string input, string want)[] urlCases =
+            {
+                ("https://api.openai.com/v1",  "https://api.openai.com/v1/chat/completions"),
+                ("https://api.openai.com/v1/", "https://api.openai.com/v1/chat/completions"),
+                ("https://api.openai.com/v1/chat/completions",
+                 "https://api.openai.com/v1/chat/completions"),
+                ("http://localhost:11434",     "http://localhost:11434/v1/chat/completions"),
+                ("http://localhost:11434/",    "http://localhost:11434/v1/chat/completions"),
+                ("",                           ""),
+            };
+            int urlPass = 0;
+            foreach (var (ui, uw) in urlCases)
+            {
+                string got = AutoConfig.ChatUrl(ui);
+                if (got == uw) urlPass++;
+                else W($"  ChatUrl MISMATCH: '{ui}' -> '{got}' (want '{uw}')");
+            }
+            Assert(urlPass == urlCases.Length, $"AI endpoint URL normalization {urlPass}/{urlCases.Length}");
+
+            // ★응답 파싱 — LLM 은 항목을 흘리거나 잡담·코드펜스를 섞는다. 한 항목의 실패가
+            // 배치 전체를 죽이면 안 되고, 빠진 항목은 빈 문자열이어야 한다(호출부가 빈칸 유지).
+            string Chat(string content) => JsonSerializer.Serialize(new
+            {
+                choices = new[] { new { message = new { content } } },
+            });
+            (string body, int n, string[] want, string what)[] chatCases =
+            {
+                (Chat("{\"1\":\"가\",\"2\":\"나\"}"), 2, new[] { "가", "나" }, "plain object"),
+                (Chat("{\"2\":\"나\",\"1\":\"가\"}"), 2, new[] { "가", "나" },
+                    "order-independent (keyed, not positional)"),
+                (Chat("{\"1\":\"가\"}"), 2, new[] { "가", "" }, "missing item -> empty, not failure"),
+                (Chat("```json\n{\"1\":\"가\",\"2\":\"나\"}\n```"), 2, new[] { "가", "나" },
+                    "markdown fence tolerated"),
+                (Chat("Sure! Here you go: {\"1\":\"가\",\"2\":\"나\"} Hope this helps."), 2,
+                    new[] { "가", "나" }, "chatty preamble/epilogue tolerated"),
+                (Chat("I cannot do that."), 2, new[] { "", "" }, "no JSON -> all empty"),
+                (Chat("{\"1\": 42, \"2\":\"나\"}"), 2, new[] { "", "나" }, "non-string value -> empty"),
+            };
+            int chatPass = 0;
+            foreach (var (cb, cn, cw, cwhat) in chatCases)
+            {
+                try
+                {
+                    var got = AutoTranslator.ParseChatTranslations(cb, cn);
+                    if (got.Count == cn && got.SequenceEqual(cw)) chatPass++;
+                    else W($"  ParseChat MISMATCH [{cwhat}]: got [{string.Join("|", got)}]"
+                           + $" want [{string.Join("|", cw)}]");
+                }
+                catch (Exception ex) { W($"  ParseChat THREW [{cwhat}]: {ex.Message}"); }
+            }
+            Assert(chatPass == chatCases.Length,
+                $"AI response parsing (missing/fenced/chatty) {chatPass}/{chatCases.Length}");
+
+            // ★OpenAI 호환 경로 end-to-end — 루프백 서버로 실제 왕복시킨다.
+            // 파싱은 위에서 봤지만 "요청을 어떻게 만들어 보내는가"(주소 정규화 결과·모델명·본문)는
+            // 네트워크를 태워 보기 전에는 증명되지 않는다. HttpListener 는 Windows 에서 urlacl 이
+            // 필요할 수 있어 TcpListener 로 최소 HTTP 를 직접 말한다(권한 불필요).
+            try
+            {
+                var listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                string received = "";
+
+                var serve = Task.Run(async () =>
+                {
+                    using var client = await listener.AcceptTcpClientAsync();
+                    using var ns = client.GetStream();
+                    var buf = new byte[64 * 1024];
+                    var sb = new StringBuilder();
+                    for (int r = 0; r < 4; r++)      // 헤더+본문이 한 번에 안 올 수 있다
+                    {
+                        int got = await ns.ReadAsync(buf, 0, buf.Length);
+                        if (got <= 0) break;
+                        sb.Append(Encoding.UTF8.GetString(buf, 0, got));
+                        if (sb.ToString().Contains("\"model\"")) break;
+                    }
+                    received = sb.ToString();
+
+                    string payload = JsonSerializer.Serialize(new
+                    {
+                        choices = new[]
+                        {
+                            new { message = new { content = "{\"1\":\"<ph>{0}</ph> 피해를 줍니다.\"}" } },
+                        },
+                    });
+                    byte[] body = Encoding.UTF8.GetBytes(payload);
+                    byte[] head = Encoding.ASCII.GetBytes(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                        + body.Length + "\r\nConnection: close\r\n\r\n");
+                    await ns.WriteAsync(head, 0, head.Length);
+                    await ns.WriteAsync(body, 0, body.Length);
+                    await ns.FlushAsync();
+                });
+
+                var loopCfg = new AutoConfig
+                {
+                    Provider = AutoProvider.OpenAiCompatible,
+                    BaseUrl = $"http://127.0.0.1:{port}",     // ★경로 없는 호스트 → /v1 보충돼야 함
+                    Model = "solo-test-model",
+                };
+                var (tok, tmsg) = await AutoTranslator.TestAsync("kor", loopCfg);
+                await Task.WhenAny(serve, Task.Delay(3000));
+                listener.Stop();
+
+                Assert(tok, $"OpenAI-compatible round trip over loopback -> {tmsg}");
+                Assert(received.Contains("POST /v1/chat/completions", StringComparison.Ordinal),
+                    "bare host got '/v1/chat/completions' appended  (got: "
+                    + new string(received.TakeWhile(c => c != '\r').ToArray()) + ")");
+                Assert(received.Contains("solo-test-model", StringComparison.Ordinal),
+                    "model name travelled in the request body");
+                // ★와이어에서 '<ph>' 를 찾으면 안 된다 — System.Text.Json 은 기본이 HTML-safe
+                // 이스케이프라 '<'/'>' 가 \u003C/\u003E 로 나간다(수신측이 디코드하므로 기능은 무해).
+                // 그래서 바이트가 아니라 "엔드포인트가 실제로 읽는 내용"을 확인한다.
+                string sentUser = "";
+                try
+                {
+                    int hdrEnd = received.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                    string reqBody = hdrEnd >= 0 ? received.Substring(hdrEnd + 4) : received;
+                    using var rd = JsonDocument.Parse(reqBody);
+                    var msgs = rd.RootElement.GetProperty("messages");
+                    sentUser = msgs[msgs.GetArrayLength() - 1].GetProperty("content").GetString() ?? "";
+                }
+                catch (Exception ex) { W("  request body parse failed: " + ex.Message); }
+
+                Assert(sentUser.Contains("<ph>", StringComparison.Ordinal),
+                    "masked placeholder tags reach the endpoint intact (after JSON decoding)");
+                Assert(sentUser.TrimStart().StartsWith("{", StringComparison.Ordinal),
+                    "items are sent as a number-keyed JSON object (the ordering contract)");
+            }
+            catch (Exception ex) { Assert(false, "OpenAI loopback round trip threw: " + ex.Message); }
 
             // ── 버전 기반 싱크 감지 ──────────────────────────────────
             Assert(TranslationStore.SameVersion("1.0.0", "1.0.0")
@@ -407,7 +553,14 @@ internal static class SoloTest
             {
                 var tp = typeof(TranslatorPanel);
                 var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
-                bool paneled = tp.GetField("_root", flags)?.GetValue(null) != null;
+                // 패널은 메인메뉴 버튼 패치가 붙여 준다 — 모드가 많은 환경에선 이 시점보다 늦을 수
+                // 있어 즉시 판정하면 레이스로 스킵된다(실측: 3회 중 1회만 부착). 잠깐 기다린다.
+                bool paneled = false;
+                for (int w = 0; w < 40 && !paneled; w++)
+                {
+                    paneled = tp.GetField("_root", flags)?.GetValue(null) != null;
+                    if (!paneled) await Task.Delay(200);
+                }
                 if (!paneled) W("UI drive: panel not attached (menu button missing) — skipping render shot");
                 else
                 {
@@ -428,6 +581,44 @@ internal static class SoloTest
                         await Shot("4_languages_" + mod.ContentLang);
                     }
                     else W("UI drive: no supported mod to open");
+
+                    // ── 자동번역 설정 모달(v1.19) — 공급자 선택 UI 가 실제로 그려지는지 ──
+                    // 로직 assert 로는 레이아웃 붕괴(칸 겹침·잘림)를 못 잡는다. 두 공급자 상태를
+                    // 모두 찍어 드롭다운 전환이 섹션을 실제로 바꾸는지까지 시각 증거로 남긴다.
+                    tp.GetMethod("PromptApiKey", flags)?.Invoke(null, new object?[] { null });
+                    await Task.Delay(400);
+
+                    // 다이얼로그는 패널 루트(_root)의 자식이다 — SceneTree.Root 부터 훑으면
+                    // 임베디드 서브윈도 배치에 따라 놓칠 수 있으므로 부모에서 바로 찾는다.
+                    var panelRoot = tp.GetField("_root", flags)?.GetValue(null) as Node;
+
+                    // ★스크린샷에 실제 API 키가 찍히지 않게 가린다. selftest.* 는 업로더·gitignore 가
+                    // 제외하지만, 키를 디스크의 PNG 로 남길 이유 자체가 없다.
+                    if (panelRoot != null)
+                        foreach (var le in FindAllByType<LineEdit>(panelRoot))
+                            if (le.Text.Length > 12 && !le.Text.StartsWith("http", StringComparison.Ordinal))
+                                le.Text = new string('*', 8) + "-****-****-****-************:fx";
+                    await Task.Delay(120);
+                    await Shot("5_setup_deepl");
+
+                    // 드롭다운을 'AI endpoint' 로 돌려 두 번째 섹션을 그린다.
+                    var picker = panelRoot == null ? null : FindNodeByType<OptionButton>(panelRoot);
+                    if (picker != null && picker.ItemCount >= 2)
+                    {
+                        picker.Selected = 1;
+                        picker.EmitSignal(OptionButton.SignalName.ItemSelected, 1);
+                        await Task.Delay(350);
+                        W("UI drive: switched auto-fill provider dropdown to 'AI endpoint'");
+                        await Shot("6_setup_ai");
+                    }
+                    else W("UI drive: provider dropdown not found — setup dialog may not have opened");
+
+                    // ★모달을 반드시 닫는다 — 남겨 두면 Save 가 눌리지 않아 설정이 바뀌진 않지만,
+                    // 이후 스크린샷과 패널 Hide 를 가린다.
+                    if (panelRoot != null)
+                        foreach (var dlg in FindAllByType<AcceptDialog>(panelRoot)) dlg.QueueFree();
+                    await Task.Delay(150);
+
                     tp.GetMethod("Hide", flags)?.Invoke(null, null);
                     await Task.Delay(150);
                 }
@@ -448,6 +639,28 @@ internal static class SoloTest
     }
 
     // Godot 루트 뷰포트를 selftest.sp.<name>.png 로 저장(시각 증거 필수).
+    /// <summary>scene tree 에서 타입이 일치하는 첫 노드를 찾는다(UI 구동용).</summary>
+    private static T? FindNodeByType<T>(Node root) where T : Node
+    {
+        if (root is T hit) return hit;
+        foreach (var c in root.GetChildren())
+            if (c is Node n) { var r = FindNodeByType<T>(n); if (r != null) return r; }
+        return null;
+    }
+
+    /// <summary>scene tree 에서 타입이 일치하는 모든 노드(모달 정리용).</summary>
+    private static List<T> FindAllByType<T>(Node root) where T : Node
+    {
+        var outp = new List<T>();
+        void Walk(Node n)
+        {
+            if (n is T hit) outp.Add(hit);
+            foreach (var c in n.GetChildren()) if (c is Node cn) Walk(cn);
+        }
+        Walk(root);
+        return outp;
+    }
+
     private static async Task Shot(string name)
     {
         try
