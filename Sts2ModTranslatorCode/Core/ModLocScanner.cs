@@ -125,7 +125,7 @@ public static class ModLocScanner
                 foreach (string file in SafeFiles(ldir).Where(f => f.EndsWith(".json")))
                 {
                     string table = file.Substring(0, file.Length - ".json".Length);
-                    var dict = ReadResJson($"{ldir}/{file}");
+                    var dict = ReadResJson($"{ldir}/{file}", id);
                     if (dict.Count > 0) tables[table] = dict;
                 }
                 if (tables.Count > 0) sm.ByLang[lang] = tables;
@@ -137,10 +137,14 @@ public static class ModLocScanner
                 // 평면 localization/*.json (예: en.json) 은 모드가 자체 i18n 으로 직접 읽는 패턴 —
                 // 게임 LocManager 를 거치지 않아 주입 불가(디컴파일로 확인된 ModConfig 케이스).
                 bool flatFiles = SafeFiles(locRoot).Any(f => f.EndsWith(".json"));
+                // 파싱 실패로 전부 비었다면 그 사실을 사유에 적는다 — "테이블이 없다" 와 원인이 전혀 다르다.
+                int failed = LocJson.FailureCount(id);
                 result.Unsupported.Add(new UnsupportedMod
                 {
                     Id = id, Name = name,
-                    Reason = flatFiles
+                    Reason = failed > 0
+                        ? $"{failed} localization file(s) failed to parse — see the log for the file path and error"
+                        : flatFiles
                         ? "self-loaded localization (flat localization/*.json) — bypasses the game's LocManager, not injectable"
                         : "localization/ present but no readable {lang}/{table}.json tables"
                 });
@@ -256,8 +260,12 @@ public static class ModLocScanner
         catch { return new(); }
     }
 
-    /// <summary>res:// (pck 포함) 경로의 flat {string:string} JSON 을 읽는다. 실패 시 빈 dict.</summary>
-    public static Dictionary<string, string> ReadResJson(string resPath)
+    /// <summary>
+    /// res:// (pck 포함) 경로의 flat {string:string} JSON 을 읽는다. 실패 시 빈 dict.
+    /// 주석/후행 콤마는 게임 로더와 같이 허용(<see cref="LocJson"/>), 그 외 파싱 실패는
+    /// 모드 id + 경로와 함께 경고로 남긴다 — 조용히 사라지면 원인을 알 수 없다.
+    /// </summary>
+    public static Dictionary<string, string> ReadResJson(string resPath, string modId = "")
     {
         try
         {
@@ -265,10 +273,11 @@ public static class ModLocScanner
             if (f == null) return new();
             string text = f.GetAsText();
             if (string.IsNullOrWhiteSpace(text)) return new();
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(text) ?? new();
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read) ?? new();
         }
-        catch
+        catch (Exception ex)
         {
+            LocJson.WarnParseFailure(resPath, modId, ex);
             return new();
         }
     }

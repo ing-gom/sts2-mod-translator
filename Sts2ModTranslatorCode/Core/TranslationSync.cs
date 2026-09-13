@@ -261,7 +261,7 @@ public static class TranslationSync
     {
         var bad = new List<string>();
         Dictionary<string, string>? d;
-        try { d = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json); }
+        try { d = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json, LocJson.Read); }
         catch { return bad; }
         if (d == null) return bad;
         foreach (var kv in d)

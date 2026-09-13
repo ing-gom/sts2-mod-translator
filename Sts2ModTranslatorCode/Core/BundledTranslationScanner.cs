@@ -177,7 +177,7 @@ public static class BundledTranslationScanner
             {
                 string lang = Path.GetFileName(ldir);
                 foreach (string fpath in SafeFilesFs(ldir).Where(f => IsDataFile(Path.GetFileName(f))))
-                    Aggregate(agg, p, targetId, lang, TableOf(Path.GetFileName(fpath)), ReadFsJson(fpath));
+                    Aggregate(agg, p, targetId, lang, TableOf(Path.GetFileName(fpath)), ReadFsJson(fpath, p.Id));
             }
         }
     }
@@ -194,15 +194,21 @@ public static class BundledTranslationScanner
         catch { return new(); }
     }
 
-    private static Dictionary<string, string> ReadFsJson(string path)
+    /// <summary>번역 모드가 동봉한 flat {string:string} JSON 을 읽는다(주석/후행 콤마 허용).
+    /// 파싱 실패는 모드 id + 경로와 함께 경고 — 그냥 비우면 번역이 통째로 빠진 채 조용히 넘어간다.</summary>
+    private static Dictionary<string, string> ReadFsJson(string path, string modId = "")
     {
         try
         {
             string text = File.ReadAllText(path);
             if (string.IsNullOrWhiteSpace(text)) return new();
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(text) ?? new();
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read) ?? new();
         }
-        catch { return new(); }
+        catch (Exception ex)
+        {
+            LocJson.WarnParseFailure(path, modId, ex);
+            return new();
+        }
     }
 
     // ── res:// 읽기(PCK 패키징 제공 모드 폴백) ─────────────
@@ -227,7 +233,7 @@ public static class BundledTranslationScanner
             {
                 string ldir = $"{tdir}/{lang}";
                 foreach (string file in ModLocScanner.SafeFiles(ldir).Where(IsDataFile))
-                    Aggregate(agg, p, targetId, lang, TableOf(file), ModLocScanner.ReadResJson($"{ldir}/{file}"));
+                    Aggregate(agg, p, targetId, lang, TableOf(file), ModLocScanner.ReadResJson($"{ldir}/{file}", p.Id));
             }
         }
     }

@@ -150,7 +150,7 @@ public static class AutoTranslator
             return (false, editorJson, 0, 0, $"This mod has no DeepL mapping for language '{lang}' yet.");
 
         Dictionary<string, string>? cur;
-        try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(editorJson); }
+        try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(editorJson, LocJson.Read); }
         catch (Exception ex) { return (false, editorJson, 0, 0, "Current JSON is invalid — fix it first: " + ex.Message); }
         if (cur == null) return (false, editorJson, 0, 0, "Current JSON top-level is not an object.");
 
@@ -204,7 +204,7 @@ public static class AutoTranslator
             var eng = mod.EngByTable[table];
             Dictionary<string, string>? cur;
             try { cur = JsonSerializer.Deserialize<Dictionary<string, string>>(
-                          TranslationStore.OverrideText(mod.Id, lang, table)); }
+                          TranslationStore.OverrideText(mod.Id, lang, table), LocJson.Read); }
             catch { continue; } // 깨진 override 파일은 건너뛴다(편집기에서 고쳐야 함)
             if (cur == null) continue;
 

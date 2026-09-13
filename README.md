@@ -108,6 +108,8 @@ Mods built on the **BaseLib** framework (e.g. FGO-based mods) author their text 
 
 Translations live under the mod's `Translations/` folder (use **Open Folder**), with a fallback to `%APPDATA%\Sts2ModTranslator\` if the mod folder isn't writable.
 
+**Reading other mods' localization files:** the scanner is as forgiving as the game's own loader — `//` and `/* */` comments and trailing commas in a mod's `localization/<lang>/*.json` are accepted, so mods whose authors annotate their loc files are picked up normally. A file that really is malformed is reported in the log with the mod id, the file path and the parser error, and the mod list says how many files failed instead of silently showing no keys.
+
 ## Sharing translations as a standalone mod
 
 You can turn your work into its own distributable mod — like other mods reference **baselib**, a *translation mod* just references this one. Other players install your translation mod (plus this one) and the text is applied automatically, no editing required.

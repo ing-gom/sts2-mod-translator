@@ -173,7 +173,7 @@ public static class TranslationStore
             if (!File.Exists(path)) return new();
             string text = File.ReadAllText(path, Encoding.UTF8);
             if (string.IsNullOrWhiteSpace(text)) return new();
-            return JsonSerializer.Deserialize<Dictionary<string, string>>(text) ?? new();
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read) ?? new();
         }
         catch { return new(); }
     }
@@ -633,7 +633,7 @@ public static class TranslationStore
         Dictionary<string, string>? d;
         try
         {
-            d = JsonSerializer.Deserialize<Dictionary<string, string>>(text);
+            d = JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read);
             if (d == null) return (false, "JSON 최상위가 객체가 아닙니다");
         }
         catch (Exception ex) { return (false, "JSON 파싱 오류: " + ex.Message); }
@@ -671,7 +671,7 @@ public static class TranslationStore
         try
         {
             ext = JsonSerializer.Deserialize<Dictionary<string, string>>(
-                File.ReadAllText(externalPath, Encoding.UTF8));
+                File.ReadAllText(externalPath, Encoding.UTF8), LocJson.Read);
         }
         catch (Exception ex) { return (false, "업로드 파일 파싱 오류: " + ex.Message); }
         if (ext == null) return (false, "업로드 JSON 최상위가 객체가 아닙니다");
@@ -747,7 +747,7 @@ public static class TranslationStore
         {
             string p = ReadPath(Path.Combine(Root, "pack_selection" + DataExt));
             if (!File.Exists(p)) return new();
-            return JsonSerializer.Deserialize<List<string>>(File.ReadAllText(p, Encoding.UTF8)) ?? new();
+            return JsonSerializer.Deserialize<List<string>>(File.ReadAllText(p, Encoding.UTF8), LocJson.Read) ?? new();
         }
         catch { return new(); }
     }
@@ -829,7 +829,7 @@ public static class TranslationStore
             string manifestPath = Path.Combine(destRoot, id, id + ".json");
             if (!File.Exists(manifestPath)) return null;
             var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                File.ReadAllText(manifestPath, Encoding.UTF8));
+                File.ReadAllText(manifestPath, Encoding.UTF8), LocJson.Read);
             if (doc != null && doc.TryGetValue("version", out var v) && v.ValueKind == JsonValueKind.String)
             {
                 string s = (v.GetString() ?? "").Trim();
@@ -988,7 +988,7 @@ public static class TranslationStore
                     if (File.Exists(mf))
                     {
                         var doc = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
-                            File.ReadAllText(mf, Encoding.UTF8));
+                            File.ReadAllText(mf, Encoding.UTF8), LocJson.Read);
                         if (doc != null)
                         {
                             if (doc.TryGetValue("name", out var n) && n.ValueKind == JsonValueKind.String)
@@ -1197,7 +1197,7 @@ public static class TranslationStore
             if (!File.Exists(path)) return true;
             string text = File.ReadAllText(path, Encoding.UTF8);
             if (string.IsNullOrWhiteSpace(text)) return true;
-            var d = JsonSerializer.Deserialize<Dictionary<string, string>>(text);
+            var d = JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read);
             if (d == null) { error = "최상위가 객체가 아닙니다"; return false; }
             dict = d;
             return true;
