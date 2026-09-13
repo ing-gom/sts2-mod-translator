@@ -63,10 +63,25 @@ The built-in keyword glossary already pins the game's own terms (`Vulnerable` �
 
 To speed up a first pass, the editor can pre-fill **empty** entries with DeepL:
 
-- Set your DeepL API key once (**Auto-translate…** on the mods list — the free tier works).
+- Set your DeepL API key once (**DeepL key…** on the mods list — the free tier's 500,000 chars/month is plenty).
 - **Auto-fill ✨** drafts the open file; **Auto-fill all ✨** drafts every file for the current language. Existing translations are never overwritten — only blanks are filled, as a draft to review.
 - **Keyword accuracy:** highlighted game keywords (`Vulnerable`, `Block`, `Exhaust`, …) are corrected to the game's own official term in your language — extracted from the game's localization for 13 languages — so drafts match in-game wording even when the machine translation doesn't.
 - **Placeholders** (`!D!`, `[color]…[/color]`, `{…}`) are protected so the translation can't corrupt them.
+
+**Getting a key.** It's free, but signing up isn't enough — the key only exists once a plan
+is picked:
+
+1. Open [deepl.com/pro-api](https://www.deepl.com/pro-api) and sign up (a Google account works).
+2. Choose the free plan, **API Free**. The form asks for an address.
+3. **Account ▸ API keys** → copy the key.
+4. In game: **DeepL key…** → paste. Free keys end in `:fx` — keep that suffix.
+
+The same steps, with an **Open in browser** button, are in the **DeepL key…** dialog.
+
+> **DeepL doesn't serve every region** — Russia and Belarus among them. There it only works
+> over a VPN, and a blocked request can look like a bad key even when the key is fine
+> (the mod now says so instead of blaming the key). Without a VPN, use the AI-agent route
+> below: it never contacts DeepL.
 
 ### Translate with an AI agent
 

@@ -53,6 +53,29 @@ public static class AutoTranslator
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(45) };
 
+    /// <summary>DeepL 키 발급 안내 페이지. 키 입력 모달과 오류 안내가 같은 주소를 쓴다.</summary>
+    public const string SignupUrl = "https://www.deepl.com/pro-api";
+
+    /// <summary>
+    /// 지역 차단 안내의 공통 꼬리말. DeepL 은 러시아·벨라루스 등 일부 지역에 서비스하지 않아
+    /// 가입도 API 호출도 막힌다 — <b>키가 멀쩡해도</b> 실패하므로 "키를 확인하라"고만 하면 오진이 된다.
+    /// </summary>
+    public const string RegionNote =
+        "DeepL doesn't serve every region (Russia and Belarus among them) — there it only works over a VPN. "
+        + "Without one, use \"Translate with AI…\" instead: that route never contacts DeepL.";
+
+    // 오류 메시지 앞부분에 심는 표식. UI 가 "키 문제가 아닐 수 있다"는 후속 안내를 띄울지 판단한다.
+    private const string UnreachableTag = "Couldn't reach DeepL";
+    private const string RefusedTag = "DeepL refused the request";
+
+    /// <summary>
+    /// 이 오류가 키 문제가 아니라 <b>네트워크/지역 차단</b>일 수 있는지. 도달 실패(DNS·타임아웃)와
+    /// HTTP 403 이 해당한다 — 403 은 잘못된 키일 수도, 차단된 지역일 수도 있어 둘 다 안내한다.
+    /// </summary>
+    public static bool LooksBlocked(string error) =>
+        error.Contains(UnreachableTag, StringComparison.Ordinal)
+        || error.Contains(RefusedTag, StringComparison.Ordinal);
+
     // DeepL 요청당 보수적 상한(텍스트 개수 / 합산 바이트). 문서 한도(50개·128KiB)보다 낮게.
     private const int MaxBatchCount = 40;
     private const int MaxBatchChars = 90_000;
@@ -369,11 +392,31 @@ public static class AutoTranslator
         };
         req.Headers.TryAddWithoutValidation("Authorization", "DeepL-Auth-Key " + trimmed);
 
-        using var resp = await Http.SendAsync(req);
-        string body = await resp.Content.ReadAsStringAsync();
-        if (!resp.IsSuccessStatusCode)
-            throw new Exception(DescribeError((int)resp.StatusCode, body));
+        // 도달 실패(DNS·연결 거부·타임아웃)는 .NET 기본 메시지가 "An error occurred while sending
+        // the request." 뿐이라 단서가 없다 → 지역 차단 가능성을 명시해 오진을 막는다.
+        HttpResponseMessage resp;
+        try { resp = await Http.SendAsync(req); }
+        catch (TaskCanceledException)
+        {
+            throw new Exception($"{UnreachableTag} — the request timed out. {RegionNote}");
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new Exception($"{UnreachableTag} — {ex.Message} {RegionNote}");
+        }
 
+        using (resp)
+        {
+            string body = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+                throw new Exception(DescribeError((int)resp.StatusCode, body));
+            return ParseTranslations(body);
+        }
+    }
+
+    /// <summary>DeepL 응답 JSON 에서 translations[].text 를 순서대로 뽑는다.</summary>
+    private static List<string> ParseTranslations(string body)
+    {
         var result = new List<string>();
         using var doc = JsonDocument.Parse(body);
         if (doc.RootElement.TryGetProperty("translations", out var arr) &&
@@ -388,7 +431,11 @@ public static class AutoTranslator
         string hint = status switch
         {
             400 => "DeepL rejected the request — this target language may be unavailable for your key.",
-            401 or 403 => "Authentication failed — check your DeepL API key.",
+            401 => "Authentication failed — check your DeepL API key. "
+                   + "Copy it whole, including the ':fx' suffix that free keys end with.",
+            // 403 은 잘못된 키와 지역 차단이 겹치는 코드다 — 예전엔 401 과 묶어 "키를 확인하라"고만
+            // 안내해 차단 지역 사용자를 엉뚱한 곳으로 보냈다.
+            403 => $"{RefusedTag} — either the key is wrong, or DeepL doesn't serve your region. {RegionNote}",
             429 => "Too many requests — wait a moment and retry.",
             456 => "DeepL quota exceeded for this key (monthly character limit).",
             _ => "DeepL request failed.",

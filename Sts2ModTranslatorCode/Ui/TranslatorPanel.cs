@@ -1689,6 +1689,36 @@ public static class TranslatorPanel
     private static bool _autoBusy;
 
     /// <summary>
+    /// 자동 번역 실패를 상태줄에 띄우되, 원인이 네트워크/지역 차단으로 보이면 모달까지 띄워
+    /// <b>키가 없어도 되는</b> AI 에이전트 경로로 안내한다. 차단 지역에서는 키를 몇 번 다시 넣어도
+    /// 절대 성공하지 않으므로, 여기서 다른 길을 제시하지 않으면 사용자는 그냥 막힌다.
+    /// </summary>
+    private static void ReportAutoFillError(string err)
+    {
+        SetStatus("Auto-translate failed: " + err, true, true);
+        if (!AutoTranslator.LooksBlocked(err)) return;
+        if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+
+        var dlg = new AcceptDialog
+        {
+            Title = "DeepL couldn't be reached",
+            OkButtonText = "Translate with AI…",
+            MinSize = new Vector2I(700, 0),
+        };
+        var box = new VBoxContainer();
+        box.AddChild(LblWrap(err, GRAY, 640));
+        box.AddChild(Lbl("This usually isn't your key. Two ways forward:", WHITE));
+        box.AddChild(Lbl("  ·  Turn on a VPN and press Auto-fill again, or", WHITE));
+        box.AddChild(Lbl("  ·  Hand the files to an AI agent — no API key, no DeepL.", WHITE));
+        dlg.AddChild(box);
+
+        dlg.Confirmed += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); PromptAiKit(); };
+        dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
+        _root.AddChild(dlg);
+        dlg.PopupCentered();
+    }
+
+    /// <summary>
     /// 편집기의 빈 값들을 DeepL 로 채운다(초안). 키가 없으면 먼저 입력 모달을 띄우고,
     /// 끝나면 결과를 편집기에 채워 넣되 *자동 저장하지 않는다*(사용자가 검수 후 Save).
     /// </summary>
@@ -1722,7 +1752,7 @@ public static class TranslatorPanel
                 _autoBusy = false;
                 if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
                 // 사용자가 그새 다른 뷰로 이동했으면 편집기에 쓰지 않는다.
-                if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                if (!ok) { ReportAutoFillError(err); return; }
                 TranslationStore.RecordTargetVersion(mod.Id, mod.Version); // 번역 기준 버전 기록
                 if (_view == View.Editor && _editor != null && GodotObject.IsInstanceValid(_editor))
                 {
@@ -1779,7 +1809,7 @@ public static class TranslatorPanel
                     {
                         _autoBusy = false;
                         if (GodotObject.IsInstanceValid(btn)) btn.Disabled = false;
-                        if (!ok) { SetStatus("Auto-translate failed: " + err, true, true); return; }
+                        if (!ok) { ReportAutoFillError(err); return; }
                         TranslationStore.RecordTargetVersion(mod.Id, mod.Version); // 번역 기준 버전 기록
                         TranslationSync.ReloadFromDisk();
                         string warn = err.Length > 0 ? $"  (stopped early: {err})" : "";
@@ -1795,7 +1825,14 @@ public static class TranslatorPanel
             });
     }
 
-    /// <summary>DeepL API 키 입력 모달(AcceptDialog + LineEdit). 저장 시 onSaved 실행.</summary>
+    /// <summary>
+    /// DeepL API 키 입력 모달(AcceptDialog + LineEdit). 저장 시 onSaved 실행.
+    ///
+    /// ★단계를 전부 적는 이유: "deepl.com/pro-api 에서 받으세요" 한 줄로는 아무도 못 받는다.
+    /// 실제로 한 유저가 워크샵 댓글에 5문단짜리 가이드를 대신 써 줬다 — 걸림돌은 ①요금제를
+    /// 고르기 전에는 키가 생성되지 않는다는 점, ②키 위치(계정 ▸ API 키), ③차단 지역이라는 점.
+    /// 주소는 클립보드에 자동 복사하지 <b>않는다</b>(키를 복사해 온 사용자의 클립보드를 덮어쓰게 된다).
+    /// </summary>
     private static void PromptApiKey(Action? onSaved = null)
     {
         if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
@@ -1803,16 +1840,38 @@ public static class TranslatorPanel
         {
             Title = "DeepL API key",
             OkButtonText = "Save",
-            MinSize = new Vector2I(620, 0),
+            MinSize = new Vector2I(700, 0),
         };
         var box = new VBoxContainer();
-        box.AddChild(Lbl("Paste your DeepL API key. The free tier (500,000 chars/month) works —", GRAY));
-        box.AddChild(Lbl("get one at deepl.com/pro-api. Stored locally only; never bundled into exports.", GRAY));
+        box.AddChild(Lbl("The free tier (500,000 chars/month) is plenty. Getting a key, step by step:", GRAY));
+        box.AddChild(Lbl("  1.  Open the page below and sign up   (a Google account works).", WHITE));
+        box.AddChild(Lbl("  2.  Pick the free plan — \"API Free\".  No plan, no key: it is only", WHITE));
+        box.AddChild(Lbl("        created once a plan is chosen. The signup form asks for an address.", WHITE));
+        box.AddChild(Lbl("  3.  Go to  Account ▸ API keys  and copy the key.", WHITE));
+        box.AddChild(Lbl("  4.  Paste it below. Free keys end with  ':fx'  — keep that part.", WHITE));
+
+        var url = new LineEdit
+        {
+            Text = AutoTranslator.SignupUrl,
+            Editable = false,
+            CustomMinimumSize = new Vector2(640, 36),
+        };
+        box.AddChild(url);
+        var open = ActionButton("Open in browser");
+        open.Pressed += () =>
+        {
+            try { OS.ShellOpen(AutoTranslator.SignupUrl); }
+            catch (Exception ex) { MainFile.Logger.Warn($"[Sts2ModTranslator] 브라우저 열기 실패: {ex.Message}"); }
+        };
+        box.AddChild(open);
+
+        box.AddChild(LblWrap(AutoTranslator.RegionNote, GOLD, 640));
+        box.AddChild(Lbl("Stored locally only; never bundled into exports.", GRAY));
         var le = new LineEdit
         {
             Text = TranslationStore.LoadApiKey(),
             PlaceholderText = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx",
-            CustomMinimumSize = new Vector2(560, 36),
+            CustomMinimumSize = new Vector2(640, 36),
         };
         box.AddChild(le);
         dlg.AddChild(box);
@@ -2023,6 +2082,15 @@ public static class TranslatorPanel
         var l = new Label { Text = text };
         l.AddThemeFontSizeOverride("font_size", 18);
         l.AddThemeColorOverride("font_color", c);
+        return l;
+    }
+
+    /// <summary>여러 줄로 접히는 라벨. 긴 안내문(한 문단)이 모달을 옆으로 늘리지 않게 한다.</summary>
+    private static Label LblWrap(string text, Color c, float width)
+    {
+        var l = Lbl(text, c);
+        l.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        l.CustomMinimumSize = new Vector2(width, 0);
         return l;
     }
 

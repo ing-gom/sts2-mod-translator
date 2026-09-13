@@ -48,6 +48,19 @@ The editor opens from the [b]pause menu[/b] too — see an awkward line mid-figh
 [h2]Machine-translate a first draft (DeepL)[/h2]
 Don't start from a blank template — [b]DeepL[/b] fills the [b]empty[/b] entries and never overwrites your work. Paste your own API key once (the free tier's 500,000 chars/month is plenty): [b]Auto-fill[/b] drafts the open file, [b]Auto-fill all[/b] does every file at once. Placeholders, markup and BaseLib shorthand are protected, so machine translation can't break them. It's a draft — game-specific terms still deserve a human pass.
 
+[b]Getting a DeepL key — step by step[/b] (the key is free, but it isn't handed to you on signup):
+[olist]
+[*]Open [b]deepl.com/pro-api[/b] and sign up — a Google account works.
+[*]Pick the free plan, [b]API Free[/b]. [b]No plan, no key[/b] — it is only created once you choose one. The form asks for an address.
+[*]Go to [b]Account ▸ API keys[/b] and copy the key.
+[*]In game: [b]Mod Translator ▸ DeepL key…[/b] and paste it. Free keys end in [b]:fx[/b] — keep that part.
+[/olist]
+The same steps, with an [b]Open in browser[/b] button, are inside the [b]DeepL key…[/b] dialog.
+
+[b]⚠ DeepL doesn't serve every region[/b] — Russia and Belarus among them. There it only works over a VPN, and a blocked request can look like a bad key even when the key is fine. No VPN? Use [b]Translate with AI…[/b] below instead — that route never contacts DeepL.
+[b]한국어[/b] DeepL 은 일부 지역(러시아·벨라루스 등)에 서비스하지 않습니다. 해당 지역에서는 VPN 이 필요하며, 차단된 요청이 키 오류처럼 보일 수 있습니다. VPN 없이 쓰려면 아래 [b]Translate with AI…[/b] 경로를 쓰세요 — DeepL 을 거치지 않습니다.
+[b]Русский[/b] DeepL не работает в некоторых регионах (в том числе в России и Беларуси) — там нужен VPN. Без VPN используйте [b]Translate with AI…[/b]: этот способ не обращается к DeepL.
+
 [h2]🤖 Or hand it to an AI agent[/h2]
 An [b]AI coding agent[/b] (Claude Code and similar) reads a whole file at once, so terminology stays consistent — and it handles what DeepL must skip: some text hides translatable words [i]inside[/i] a placeholder ([i]{Amount:plural:a card|{} cards}[/i]), which machine translation has to leave in English.
 [list]
