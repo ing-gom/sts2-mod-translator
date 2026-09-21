@@ -2051,8 +2051,8 @@ public static class TranslatorPanel
     {
         if (_mod == null || _editor == null) return;
         var src = _mod.EngByTable.TryGetValue(_table, out var e) ? e : null;
-        var (ok, err) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text, src);
-        if (!ok) { SetStatus("Save failed: " + err, true, true); return; }
+        var (ok, err, line, col) = TranslationStore.SaveOverrideText(_mod.Id, _lang, _table, _editor.Text, src);
+        if (!ok) { ReportSaveError(err, line, col); return; }
         // 이 대상 모드를 "지금 버전 기준으로 번역했다"고 기록(이후 모드 업데이트 시 싱크 경고 기준).
         TranslationStore.RecordTargetVersion(_mod.Id, _mod.Version);
         UpdateStaleState(); // 방금 저장으로 (재)번역된 stale 항목은 목록에서 빠진다
@@ -2067,6 +2067,64 @@ public static class TranslatorPanel
                 true, true);
         else
             SetStatus($"Saved & applied ({n} keys active).", true, false);
+    }
+
+    /// <summary>
+    /// 저장 실패(대개 JSON 문법 깨짐) 보고. 메시지만 띄우면 사용자는 생 JSON 에서 깨진 자리를
+    /// 스스로 찾아야 한다 — 좌표를 알면 <b>캐럿을 그 자리로 옮겨</b> 눈으로 바로 보이게 하고,
+    /// 자동 복구가 가능한 모양이면 미리보기와 함께 한 번 클릭으로 고칠 기회를 준다.
+    /// </summary>
+    private static void ReportSaveError(string err, int line, int col)
+    {
+        SetStatus("Save failed — " + err, true, true);
+        if (_editor == null || !GodotObject.IsInstanceValid(_editor) || line <= 0) return;
+
+        int line0 = Math.Min(line - 1, Math.Max(0, _editor.GetLineCount() - 1));
+        _editor.SetCaretLine(line0);
+        // 오류 컬럼이 그 줄 길이를 넘을 수 있다(줄 끝에서 난 오류) → 클램프.
+        _editor.SetCaretColumn(Math.Clamp(col - 1, 0, _editor.GetLine(line0).Length));
+        _editor.CenterViewportToCaret();
+        _editor.GrabFocus();
+
+        var repair = LocJson.TryRepair(_editor.Text, line0);
+        if (repair != null) OfferRepair(line0, LocJson.LineAt(_editor.Text, line0), repair.Value);
+    }
+
+    /// <summary>
+    /// "번역문이 값의 따옴표 밖에 붙었다" 가 압도적으로 흔한 깨짐 — before/after 를 보여 주고
+    /// 적용 여부를 묻는다. 눈으로 비교되므로 UI 언어를 못 읽어도 판단할 수 있다.
+    /// </summary>
+    private static void OfferRepair(int line0, string before, (string fixedText, string fixedLine) fix)
+    {
+        if (_root == null || !GodotObject.IsInstanceValid(_root)) return;
+
+        var dlg = new AcceptDialog
+        {
+            Title = $"Line {line0 + 1} looks fixable",
+            OkButtonText = "Fix it",
+            MinSize = new Vector2I(760, 0),
+        };
+        var box = new VBoxContainer();
+        box.AddChild(Lbl("The translation ended up outside the value quotes. Change this line:", WHITE));
+        box.AddChild(LblWrap(before.Trim(), RED, 700));
+        box.AddChild(Lbl("to this?", WHITE));
+        box.AddChild(LblWrap(fix.fixedLine.Trim(), GOLD, 700));
+        box.AddChild(Lbl("译文要放在引号之间 · 번역문은 따옴표 사이에", GRAY));
+        dlg.AddChild(box);
+
+        dlg.Confirmed += () =>
+        {
+            if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree();
+            if (_editor == null || !GodotObject.IsInstanceValid(_editor)) return;
+            _editor.Text = fix.fixedText;
+            _editor.SetCaretLine(line0);
+            _editor.CenterViewportToCaret();
+            UpdateEmptyCount();
+            SaveEditor(); // 고쳤으니 원래 하려던 저장을 마저 수행
+        };
+        dlg.Canceled += () => { if (GodotObject.IsInstanceValid(dlg)) dlg.QueueFree(); };
+        _root.AddChild(dlg);
+        dlg.PopupCentered();
     }
 
     /// <summary>주입에서 걸러진(문법 깨진) 항목이 있으면 상태 메시지에 경고를 덧붙인다.</summary>

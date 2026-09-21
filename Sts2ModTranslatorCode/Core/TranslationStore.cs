@@ -658,7 +658,7 @@ public static class TranslationStore
     /// <paramref name="source"/>(=이 테이블의 현재 원문 dict)을 주면 baseline(원문 변경 감지 기준)도
     /// 함께 갱신한다 — 값이 바뀐 키만 현재 원문으로 스냅샷. null 이면 baseline 은 건드리지 않는다.
     /// </summary>
-    public static (bool ok, string error) SaveOverrideText(
+    public static (bool ok, string error, int line, int col) SaveOverrideText(
         string modId, string lang, string table, string text,
         IReadOnlyDictionary<string, string>? source = null)
     {
@@ -666,15 +666,20 @@ public static class TranslationStore
         try
         {
             d = JsonSerializer.Deserialize<Dictionary<string, string>>(text, LocJson.Read);
-            if (d == null) return (false, "JSON 최상위가 객체가 아닙니다");
+            if (d == null) return (false, "the top level of this file is not a JSON object.", 0, 0);
         }
-        catch (Exception ex) { return (false, "JSON 파싱 오류: " + ex.Message); }
+        catch (Exception ex)
+        {
+            // 좌표를 함께 돌려준다 — 호출부(편집기)가 캐럿을 그 자리로 옮겨 준다.
+            var e = LocJson.ToEditError(ex, text);
+            return (false, e.Describe(), e.Line, e.Column);
+        }
         // 저장 직전 이전 override 를 읽어 둔다(변경된 키만 baseline 을 갱신하기 위함).
         var prev = source != null ? ReadJson(OverridePath(modId, lang, table)) : null;
         try { WriteRaw(OverridePath(modId, lang, table), text); }
-        catch (Exception ex) { return (false, ex.Message); }
+        catch (Exception ex) { return (false, ex.Message, 0, 0); }
         if (source != null) UpdateBaselineOnWrite(modId, lang, table, prev!, d, source);
-        return (true, "");
+        return (true, "", 0, 0);
     }
 
     /// <summary>한 테이블의 override 를 소스 키 + 빈 값으로 덮어쓴다(= 전부 원문 복귀).</summary>
@@ -705,8 +710,8 @@ public static class TranslationStore
             ext = JsonSerializer.Deserialize<Dictionary<string, string>>(
                 File.ReadAllText(externalPath, Encoding.UTF8), LocJson.Read);
         }
-        catch (Exception ex) { return (false, "업로드 파일 파싱 오류: " + ex.Message); }
-        if (ext == null) return (false, "업로드 JSON 최상위가 객체가 아닙니다");
+        catch (Exception ex) { return (false, "could not read that file as JSON — " + ex.Message); }
+        if (ext == null) return (false, "the top level of the uploaded file is not a JSON object.");
 
         try
         {
