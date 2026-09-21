@@ -313,11 +313,35 @@ public static class TranslationSync
     ///   3) 덮기 직전 값을 장부에 기록(최초 1회)한 뒤 병합
     /// 반환: 실제로 주입한 키 수.
     /// </summary>
-    private static int ApplyToTable(LocTable lt, string modId, string table, Dictionary<string, string> desired)
+    private static int ApplyToTable(LocTable lt, string modId, string table, Dictionary<string, string> desired,
+                                    IReadOnlyDictionary<string, string>? fallback = null)
     {
         string where = $"{modId}/{table}";
         var valid = FilterValidFormats(SimpleLocCompat.ApplyAll(desired), where);
         string ledgerKey = modId + "\0" + table;
+
+        // 테이블에 <b>아예 없는</b> 키만 원문으로 메운다. 모드가 zhs/ 만 동봉했는데 게임을 다른
+        // 언어로 플레이하는 경우를 구제한다(그 모드 항목이 통째로 안 실려 카드가 키로 보임).
+        // 이미 값이 있는 키는 절대 건드리지 않는다 — 그게 v1.19.1 이전의 덮어쓰기 결함이었다.
+        if (fallback != null && fallback.Count > 0)
+        {
+            Dictionary<string, string>? gap = null;
+            foreach (var kv in fallback)
+            {
+                if (string.IsNullOrEmpty(kv.Value) || valid.ContainsKey(kv.Key)) continue;
+                bool present;
+                try { present = lt.HasEntry(kv.Key); } catch { present = true; } // 알 수 없으면 건드리지 않는다
+                if (present) continue;
+                (gap ??= new Dictionary<string, string>(StringComparer.Ordinal))[kv.Key] = kv.Value;
+            }
+            if (gap != null)
+            {
+                foreach (var kv in FilterValidFormats(SimpleLocCompat.ApplyAll(gap), where + " (source fallback)"))
+                    valid[kv.Key] = kv.Value;
+                MainFile.Logger.Info(
+                    $"[Sts2ModTranslator] filled {gap.Count} missing entr(ies) in {where} from the mod's source text.");
+            }
+        }
 
         try
         {
@@ -392,13 +416,13 @@ public static class TranslationSync
             {
                 var bundledTbl = bundledForMod != null && bundledForMod.TryGetValue(table, out var bt) ? bt : null;
                 var dict = TranslationStore.BuildInjectTable(mod, language, table, bundledTbl);
-                // 주입할 것도 없고 예전에 덮은 것도 없으면 테이블을 열 이유가 없다.
-                if (dict.Count == 0 && !HasLedger(mod.Id, table)) continue;
+                // (원문 폴백이 빈구먹을 메울 수 있으므로 번역이 없어도 테이블을 한 번 열어 본다.)
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue; // 게임에 없는 테이블 — 스킵
                 // 주입 전 BaseLib SimpleLoc 저작 문법(#, !Var!, *gold*, [E] 등)을 STS2 네이티브로 변환하고
                 // (BaseLib 미사용 모드/일반 값은 그대로 통과 — 무해), SmartFormat 검증을 통과한 항목만 넣는다.
-                ApplyToTable(lt, mod.Id, table, dict);
+                ApplyToTable(lt, mod.Id, table, dict,
+                    TranslationStore.BuildFallbackTable(mod, language, table));
             }
             translated += TranslationStore.Coverage(mod, language).translated;
         }
@@ -444,7 +468,8 @@ public static class TranslationSync
             if (lt == null) continue;
             // 일반 주입과 동일하게 SimpleLoc 문법 변환 + SmartFormat 검증 + 장부 기록 후 병합
             // (사용자가 원문 위 편집을 지우면 장부에 적힐 원래 원문으로 되돌아온다).
-            n += ApplyToTable(lt, mod.Id, table, dict);
+            n += ApplyToTable(lt, mod.Id, table, dict,
+                TranslationStore.BuildFallbackTable(mod, language, table));
         }
         return n;
     }

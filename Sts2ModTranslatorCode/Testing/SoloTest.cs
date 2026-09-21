@@ -449,13 +449,14 @@ internal static class SoloTest
                 const string NMod  = "ZZ_NoClobberSelfTest";
                 const string NKeyT = "ZZ-NOCLOBBER-TRANSLATED";   // 번역이 있는 키
                 const string NKeyU = "ZZ-NOCLOBBER-UNTRANSLATED"; // 번역이 없는 키
+                const string NKeyM = "ZZ-NOCLOBBER-MISSING";      // 테이블에 아예 없는 키
                 const string Live  = "테이블에 이미 있던 현지화 {0}"; // 우리가 모르는 경로로 들어온 값
                 const string NEng  = "english original {0}";
                 const string NTr   = "내 번역 {0}";
 
                 var nmod = new SupportedMod { Id = NMod, Name = "NoClobber", ContentLang = "kor", SourceLang = "eng" };
                 nmod.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>>
-                { [Table] = new Dictionary<string, string> { [NKeyT] = NEng, [NKeyU] = NEng } };
+                { [Table] = new Dictionary<string, string> { [NKeyT] = NEng, [NKeyU] = NEng, [NKeyM] = NEng } };
 
                 LocTable? nt = null; try { nt = mgr.GetTable(Table); } catch { /* asserted below */ }
                 if (nt == null) Assert(false, "no-clobber: table missing");
@@ -476,6 +477,11 @@ internal static class SoloTest
                     Assert(nt.GetRawText(NKeyT) == NTr, "translated key IS injected");
                     Assert(nt.GetRawText(NKeyU) == Live,
                         $"untranslated key keeps the localization already in the table (got '{nt.GetRawText(NKeyU)}')");
+
+                    // (b2) 테이블에 아예 없던 키는 원문으로 메운다 — 모드가 zhs/ 만 동봉한 채 다른
+                    // 언어로 플레이할 때 카드가 'cards.X.title' 키로 보이는 것을 막는 경로.
+                    Assert(nt.HasEntry(NKeyM) && nt.GetRawText(NKeyM) == NEng,
+                        "key missing from the table is filled from the mod's source text (no raw loc key in game)");
 
                     // (c) 번역을 지우면 '덮기 직전 값' 으로 복원된다(주입 장부).
                     TranslationStore.SaveOverrideText(NMod, "kor", Table, "{}");

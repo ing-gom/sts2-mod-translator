@@ -557,6 +557,40 @@ public static class TranslationStore
     }
 
     /// <summary>
+    /// 주입 후에도 테이블에 <b>아예 없는 키</b>를 메우기 위한 원문 폴백 (키 → 원문값).
+    /// 우선순위: 모드가 현재 언어를 직접 동봉했으면 그 값 → 아니면 원문(SourceLang) 값.
+    ///
+    /// 왜 필요한가: 모드가 <c>zhs/</c> 만 동봉했는데 게임을 다른 언어로 플레이하면, 게임의 모드 로크
+    /// 머지는 <c>res://{id}/localization/{현재언어}/</c> 만 보므로 그 모드의 항목이 테이블에 <b>하나도 안 실린다</b>
+    /// — 카드 이름이 <c>cards.STRIKE_X.title</c> 처럼 키 그대로 노출된다. 그 간극을 원문으로 메운다.
+    ///
+    /// ★호출부는 반드시 <b>테이블에 없는 키에만</b> 이 값을 쓴다(<see cref="LocTable.HasEntry"/> 거짓).
+    /// 있는 키를 덮으면 게임 자체 localization_override·런타임 등록본을 지우는 v1.19.0 이전 결함으로 돌아간다.
+    /// </summary>
+    public static Dictionary<string, string> BuildFallbackTable(SupportedMod mod, string lang, string table)
+    {
+        var src = mod.EngByTable.TryGetValue(table, out var e) ? e : null;
+        Dictionary<string, string>? shipped = null;
+        if (mod.ByLang.TryGetValue(lang, out var byTable) && byTable.TryGetValue(table, out var st))
+            shipped = st; // 모드가 현재 언어를 직접 동봉한 경우의 원본값
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (src != null)
+            foreach (var kv in src)
+            {
+                if (shipped != null && shipped.TryGetValue(kv.Key, out var sv) && !string.IsNullOrEmpty(sv))
+                    result[kv.Key] = sv;
+                else if (!string.IsNullOrEmpty(kv.Value))
+                    result[kv.Key] = kv.Value;
+            }
+        if (shipped != null)
+            foreach (var kv in shipped)
+                if (!string.IsNullOrEmpty(kv.Value) && !result.ContainsKey(kv.Key))
+                    result[kv.Key] = kv.Value; // 원문 폴더엔 없고 현재 언어에만 있는 키
+        return result;
+    }
+
+    /// <summary>
     /// override 파일에서 <b>비어 있지 않은 값만</b> (키→값)으로 읽는다. 원문 언어 편집처럼
     /// "전체 테이블을 defaults 로 재구성하지 않고, 사용자가 실제로 고친 항목만" 덮어쓸 때 쓴다.
     /// 파일 없음/빈/JSON 깨짐 → 빈 dict(=아무 것도 덮어쓰지 않음, 원문 그대로).
