@@ -441,6 +441,50 @@ internal static class SoloTest
                 TranslationStore.SaveOverrideText(OrigMod, "kor", Table, "{}");
             }
 
+            // ── ★v1.19.1 회귀: 번역 없는 키는 건드리지 않고, 번역을 지우면 원래 값 복원 ─────
+            // 제보("중국어 모드가 자동으로 영어로 바뀜고 Reset 으로도 안 돌아온다")의 재발 방지.
+            // 예전엔 eng 기본값을 전부 다시 써 넣어, 우리가 모르는 경로(게임 자체 localization_override,
+            // 런타임 머지)로 테이블에 들어온 현지화를 지워 버렸다. 그 상황을 직접 심어 검증한다.
+            {
+                const string NMod  = "ZZ_NoClobberSelfTest";
+                const string NKeyT = "ZZ-NOCLOBBER-TRANSLATED";   // 번역이 있는 키
+                const string NKeyU = "ZZ-NOCLOBBER-UNTRANSLATED"; // 번역이 없는 키
+                const string Live  = "테이블에 이미 있던 현지화 {0}"; // 우리가 모르는 경로로 들어온 값
+                const string NEng  = "english original {0}";
+                const string NTr   = "내 번역 {0}";
+
+                var nmod = new SupportedMod { Id = NMod, Name = "NoClobber", ContentLang = "kor", SourceLang = "eng" };
+                nmod.ByLang["eng"] = new Dictionary<string, Dictionary<string, string>>
+                { [Table] = new Dictionary<string, string> { [NKeyT] = NEng, [NKeyU] = NEng } };
+
+                LocTable? nt = null; try { nt = mgr.GetTable(Table); } catch { /* asserted below */ }
+                if (nt == null) Assert(false, "no-clobber: table missing");
+                else
+                {
+                    // 우리가 모르는 경로로 들어온 현지화 흔내 — 테이블에 직접 심는다.
+                    nt.MergeWith(new Dictionary<string, string> { [NKeyT] = Live, [NKeyU] = Live });
+
+                    // (a) BuildInjectTable 은 번역이 있는 키만 담는다(eng 기본값/동봉 원본 주입 금지).
+                    TranslationStore.SaveOverrideText(NMod, "kor", Table,
+                        $"{{\"{NKeyT}\":\"{NTr}\",\"{NKeyU}\":\"\"}}");
+                    var built = TranslationStore.BuildInjectTable(nmod, "kor", Table);
+                    Assert(built.Count == 1 && built.ContainsKey(NKeyT),
+                        $"BuildInjectTable carries only translated keys (got {built.Count}: {string.Join(",", built.Keys)})");
+
+                    // (b) 주입: 번역한 키만 바뀌고, 번역 없는 키의 기존 현지화는 그대로.
+                    TranslationSync.InjectOriginalOverrides(mgr, nmod, "kor");
+                    Assert(nt.GetRawText(NKeyT) == NTr, "translated key IS injected");
+                    Assert(nt.GetRawText(NKeyU) == Live,
+                        $"untranslated key keeps the localization already in the table (got '{nt.GetRawText(NKeyU)}')");
+
+                    // (c) 번역을 지우면 '덮기 직전 값' 으로 복원된다(주입 장부).
+                    TranslationStore.SaveOverrideText(NMod, "kor", Table, "{}");
+                    TranslationSync.InjectOriginalOverrides(mgr, nmod, "kor");
+                    Assert(nt.GetRawText(NKeyT) == Live,
+                        $"cleared translation restores the pre-injection value (got '{nt.GetRawText(NKeyT)}')");
+                }
+            }
+
             // ── 원문 변경(stale) 감지 — baseline 스냅샷 vs 현재 원문 ─────────────
             // 게임 없이 결정적으로: 번역 저장 시 baseline 이 기록되고, 원문이 바뀐 항목만 stale 로
             // 잡히며, 무관한 키를 저장해도 낡음이 유지되고, 재번역하면 해소되는지 검증한다.

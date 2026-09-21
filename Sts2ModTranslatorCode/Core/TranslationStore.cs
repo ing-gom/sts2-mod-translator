@@ -521,40 +521,38 @@ public static class TranslationStore
     }
 
     /// <summary>
-    /// 한 테이블에 주입할 최종 dict 를 만든다. 키마다 우선순위:
+    /// 한 테이블에 주입할 최종 dict 를 만든다. <b>실제 번역이 있는 키만</b> 담는다:
     ///   1) 로컬 override 값(비어 있지 않으면) — 사용자가 인게임 에디터로 직접 한 번역
     ///   2) 설치된 번역 모드의 값(bundled, 비어 있지 않으면)
-    ///   3) 모드가 현재 언어를 직접 동봉했으면 그 원본값
-    ///   4) eng 기본값
-    /// 모든 키를 명시적으로 설정하므로 "로컬 번역을 비우면 (번역 모드 → 원문 순으로) 복귀" 가 보장된다.
+    /// 번역이 없는 키는 <b>담지 않는다</b> — 예전엔 "모드 동봉 원본 → eng 기본값" 을 전부 다시 써 넣었지만,
+    /// 그건 우리가 모르는 경로로 테이블에 들어온 현지화(게임 자체 <c>user://localization_override</c>,
+    /// 모드가 런타임에 머지한 값, 우리 리더가 파싱에 실패한 파일)를 eng 원문으로 <b>덮어써 지우는</b>
+    /// 결함이었다(중국어 모드가 영어로 바뀌고 Reset 으로도 안 돌아오던 제보). 번역을 비웠을 때의
+    /// "원래대로 복귀" 는 <see cref="TranslationSync"/> 의 주입 장부(덮기 직전 값 스냅샷)가 담당한다.
     /// bundled 는 설치된 번역 모드가 이 (대상모드, 언어, 테이블)에 제공한 (키→값). 없으면 null/빈 dict.
+    /// 주입 대상 키는 원문(eng) 테이블 ∪ bundled 키로 제한한다(모드에서 사라진 옛 override 키 배제).
     /// </summary>
     public static Dictionary<string, string> BuildInjectTable(
         SupportedMod mod, string lang, string table, IReadOnlyDictionary<string, string>? bundled = null)
     {
         var eng = mod.EngByTable.TryGetValue(table, out var e) ? e : new Dictionary<string, string>();
-        Dictionary<string, string>? shipped = null;
-        if (mod.ByLang.TryGetValue(lang, out var byTable) && byTable.TryGetValue(table, out var st))
-            shipped = st; // 모드가 현재 언어를 직접 동봉한 경우의 원본값
-
         var ov = ReadJson(OverridePath(mod.Id, lang, table));
 
-        // eng 키 ∪ bundled 키 — 번역 모드가 eng 에 없는 키를 줘도 누락 없이 주입.
-        var keys = new HashSet<string>(eng.Keys, StringComparer.Ordinal);
-        if (bundled != null) foreach (var k in bundled.Keys) keys.Add(k);
-
-        var result = new Dictionary<string, string>(keys.Count);
-        foreach (var key in keys)
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in ov)
         {
-            if (ov.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v))
-                result[key] = v;                                   // 1) 로컬 번역값
-            else if (bundled != null && bundled.TryGetValue(key, out var bv) && !string.IsNullOrEmpty(bv))
-                result[key] = bv;                                  // 2) 설치된 번역 모드
-            else if (shipped != null && shipped.TryGetValue(key, out var sv) && !string.IsNullOrEmpty(sv))
-                result[key] = sv;                                  // 3) 동봉 원본(현재 언어)
-            else if (eng.TryGetValue(key, out var ev))
-                result[key] = ev;                                  // 4) eng 기본값
+            if (string.IsNullOrEmpty(kv.Value)) continue;                 // 미번역 — 원본 그대로 둔다
+            if (!eng.ContainsKey(kv.Key)
+                && (bundled == null || !bundled.ContainsKey(kv.Key))) continue; // 모드에 없는 옛 키
+            result[kv.Key] = kv.Value;                                    // 1) 로컬 번역값
         }
+        if (bundled != null)
+            foreach (var kv in bundled)
+            {
+                if (string.IsNullOrEmpty(kv.Value)) continue;
+                if (result.ContainsKey(kv.Key)) continue;                 // 로컬 번역이 우선
+                result[kv.Key] = kv.Value;                                // 2) 설치된 번역 모드
+            }
         return result;
     }
 

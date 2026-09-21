@@ -273,9 +273,97 @@ public static class TranslationSync
         return bad;
     }
 
+    // ── 주입 장부(우리가 덮어쓴 키의 '덮기 직전 값') ────
+
+    /// <summary>
+    /// 우리가 로크 테이블에 덮어쓴 키의 <b>덮기 직전 값</b>. "모드id\0테이블" → 키 → 원래 값
+    /// (그 키가 테이블에도 폴백에도 없었으면 null = 우리가 새로 만든 키).
+    ///
+    /// 왜 필요한가: <see cref="LocTable.MergeWith"/> 는 제거를 못 한다. 예전엔 "모든 키를 eng 기본값까지
+    /// 포함해 매번 다시 써 넣는" 방식으로 '번역을 비우면 원문 복귀' 를 구현했는데, 그 방식은 우리가 모르는
+    /// 경로로 테이블에 들어온 현지화(게임 자체 user://localization_override, 런타임 머지, 파싱 실패한 파일)를
+    /// 통째로 eng 원문으로 덮어써 지웠다. 이제는 <b>번역이 있는 키만</b> 주입하고, 번역이 사라진 키는
+    /// 이 장부에 적어 둔 원래 값으로 되돌린다.
+    /// </summary>
+    private static readonly Dictionary<string, Dictionary<string, string?>> _touched =
+        new(StringComparer.Ordinal);
+
+    /// <summary>장부가 기록된 언어. 언어가 바뀌면 게임이 테이블을 새로 만드므로 장부도 버린다.</summary>
+    private static string? _touchedLang;
+
+    private static void ResetLedgerIfLanguageChanged(string language)
+    {
+        if (string.Equals(_touchedLang, language, StringComparison.Ordinal)) return;
+        _touched.Clear();
+        _touchedLang = language;
+    }
+
+    /// <summary>테이블의 현재 값(폴백 포함). 없으면 null.</summary>
+    private static string? CurrentValue(LocTable lt, string key)
+    {
+        try { return lt.HasEntry(key) ? lt.GetRawText(key) : null; }
+        catch { return null; } // LocException 등 — '없음' 으로 취급
+    }
+
+    /// <summary>
+    /// 한 (모드, 테이블)의 주입을 적용한다. 순서:
+    ///   1) SimpleLoc 문법 변환 + SmartFormat 검증(깨진 항목 탈락)
+    ///   2) 이번에 주입하지 않는데 <b>예전에 우리가 덮었던</b> 키를 원래 값으로 복원
+    ///      (원래 없던 키는 MergeWith 로 지울 수 없으므로 장부에 남겨 두고 그대로 둔다)
+    ///   3) 덮기 직전 값을 장부에 기록(최초 1회)한 뒤 병합
+    /// 반환: 실제로 주입한 키 수.
+    /// </summary>
+    private static int ApplyToTable(LocTable lt, string modId, string table, Dictionary<string, string> desired)
+    {
+        string where = $"{modId}/{table}";
+        var valid = FilterValidFormats(SimpleLocCompat.ApplyAll(desired), where);
+        string ledgerKey = modId + "\0" + table;
+
+        try
+        {
+            if (_touched.TryGetValue(ledgerKey, out var ledger))
+            {
+                Dictionary<string, string>? restore = null;
+                foreach (var kv in ledger)
+                {
+                    if (valid.ContainsKey(kv.Key)) continue; // 계속 주입 중 — 복원 대상 아님
+                    if (kv.Value == null) continue;          // 우리가 만든 키 — 지울 수 없어 그대로 둔다
+                    (restore ??= new Dictionary<string, string>(StringComparer.Ordinal))[kv.Key] = kv.Value;
+                }
+                if (restore != null)
+                {
+                    lt.MergeWith(restore);
+                    foreach (var k in restore.Keys) ledger.Remove(k); // 원상복구 완료 — 장부에서 제거
+                    MainFile.Logger.Info(
+                        $"[Sts2ModTranslator] restored {restore.Count} original entr(ies) in {where}.");
+                }
+            }
+
+            if (valid.Count == 0) return 0;
+
+            if (!_touched.TryGetValue(ledgerKey, out var led))
+                _touched[ledgerKey] = led = new Dictionary<string, string?>(StringComparer.Ordinal);
+            foreach (var key in valid.Keys)
+                if (!led.ContainsKey(key)) led[key] = CurrentValue(lt, key); // 최초 1회만 스냅샷
+
+            lt.MergeWith(valid);
+            return valid.Count;
+        }
+        catch (Exception ex)
+        {
+            MainFile.Logger.Warn($"[Sts2ModTranslator] merge 실패 {where}: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>이 (모드, 테이블)에 우리가 예전에 덮어쓴 키가 남아 있는지 — 복원만을 위한 방문이 필요한지 판정.</summary>
+    private static bool HasLedger(string modId, string table) =>
+        _touched.TryGetValue(modId + "\0" + table, out var d) && d.Count > 0;
+
     private static int Inject(LocManager locMgr, ScanResult scan, string language)
     {
         LastInjectInvalidCount = 0;
+        ResetLedgerIfLanguageChanged(language); // 언어가 바뀌면 게임이 테이블을 새로 만든다 — 장부 폐기
         int translated = 0;
         var supportedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var mod in scan.Supported)
@@ -293,8 +381,10 @@ public static class TranslationSync
             // 이 대상 모드에 설치된 번역 모드가 제공한 (언어별) 번역.
             var bundledForMod = scan.Bundled.ForTargetLang(mod.Id, language);
 
-            // eng 테이블 ∪ 번역 모드가 제공한 테이블. 모든 키를 명시적으로 설정(번역값 or 원본 기본값).
-            // → 로컬 번역을 비우면 번역 모드값→원문 순으로 되돌아온다(MergeWith 는 제거를 못 하므로 필수).
+            // eng 테이블 ∪ 번역 모드가 제공한 테이블. 각 테이블에 <b>번역이 있는 키만</b> 주입한다.
+            // 번역이 없는 키는 건드리지 않는다 — 원문은 게임이 이미 들고 있고(모드 동봉 파일/게임 자체
+            // localization_override/런타임 머지), 우리가 eng 기본값으로 다시 써 넣으면 그걸 지워 버린다.
+            // 번역을 비웠을 때의 복귀는 ApplyToTable 의 장부(덮기 직전 값)가 처리한다.
             var tables = new HashSet<string>(mod.EngByTable.Keys, StringComparer.Ordinal);
             if (bundledForMod != null) foreach (var t in bundledForMod.Keys) tables.Add(t);
 
@@ -302,17 +392,13 @@ public static class TranslationSync
             {
                 var bundledTbl = bundledForMod != null && bundledForMod.TryGetValue(table, out var bt) ? bt : null;
                 var dict = TranslationStore.BuildInjectTable(mod, language, table, bundledTbl);
-                if (dict.Count == 0) continue;
+                // 주입할 것도 없고 예전에 덮은 것도 없으면 테이블을 열 이유가 없다.
+                if (dict.Count == 0 && !HasLedger(mod.Id, table)) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue; // 게임에 없는 테이블 — 스킵
-                // 주입 전 BaseLib SimpleLoc 저작 문법(#, !Var!, *gold*, [E] 등)을 STS2 네이티브로 변환.
-                // BaseLib 미사용 모드/일반 값은 그대로 통과(무해). → 게임에 '!Var!' 원형이 노출되던 문제 해소.
-                // 변환 후 SmartFormat 문법 검증을 통과한 항목만 주입(깨진 항목은 렌더링마다 예외 유발).
-                try { lt.MergeWith(FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{mod.Id}/{table}")); }
-                catch (Exception ex)
-                {
-                    MainFile.Logger.Warn($"[Sts2ModTranslator] merge 실패 {mod.Id}/{table}: {ex.Message}");
-                }
+                // 주입 전 BaseLib SimpleLoc 저작 문법(#, !Var!, *gold*, [E] 등)을 STS2 네이티브로 변환하고
+                // (BaseLib 미사용 모드/일반 값은 그대로 통과 — 무해), SmartFormat 검증을 통과한 항목만 넣는다.
+                ApplyToTable(lt, mod.Id, table, dict);
             }
             translated += TranslationStore.Coverage(mod, language).translated;
         }
@@ -325,15 +411,12 @@ public static class TranslationSync
             if (!byLang.TryGetValue(language, out var byTable)) continue;
             foreach (var (table, dict) in byTable)
             {
-                if (dict.Count == 0) continue;
+                if (dict.Count == 0 && !HasLedger(targetId, table)) continue;
                 LocTable? lt = TryGetTable(locMgr, table);
                 if (lt == null) continue;
-                // 번역 팩(bundled)도 동일하게 SimpleLoc 문법 변환 + 검증 후 주입(ApplyAll 이 새 dict 생성).
-                try { lt.MergeWith(FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{targetId}/{table}")); }
-                catch (Exception ex)
-                {
-                    MainFile.Logger.Warn($"[Sts2ModTranslator] bundled merge 실패 {targetId}/{table}: {ex.Message}");
-                }
+                // 번역 팩(bundled)도 동일하게 SimpleLoc 문법 변환 + 검증 + 장부 기록 후 주입.
+                ApplyToTable(lt, targetId, table,
+                    new Dictionary<string, string>(dict, StringComparer.Ordinal));
             }
         }
 
@@ -352,23 +435,16 @@ public static class TranslationSync
     internal static int InjectOriginalOverrides(LocManager locMgr, SupportedMod mod, string language)
     {
         int n = 0;
+        ResetLedgerIfLanguageChanged(language);
         foreach (var table in mod.EngByTable.Keys)
         {
             var dict = TranslationStore.LoadNonEmptyOverrides(mod.Id, language, table);
-            if (dict.Count == 0) continue;
+            if (dict.Count == 0 && !HasLedger(mod.Id, table)) continue;
             LocTable? lt = TryGetTable(locMgr, table);
             if (lt == null) continue;
-            // 일반 주입과 동일하게 SimpleLoc 문법 변환 + SmartFormat 검증 후 병합.
-            try
-            {
-                var valid = FilterValidFormats(SimpleLocCompat.ApplyAll(dict), $"{mod.Id}/{table}");
-                lt.MergeWith(valid);
-                n += valid.Count;
-            }
-            catch (Exception ex)
-            {
-                MainFile.Logger.Warn($"[Sts2ModTranslator] 원문 override merge 실패 {mod.Id}/{table}: {ex.Message}");
-            }
+            // 일반 주입과 동일하게 SimpleLoc 문법 변환 + SmartFormat 검증 + 장부 기록 후 병합
+            // (사용자가 원문 위 편집을 지우면 장부에 적힐 원래 원문으로 되돌아온다).
+            n += ApplyToTable(lt, mod.Id, table, dict);
         }
         return n;
     }
